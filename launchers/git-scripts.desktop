@@ -1,0 +1,26 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Git Scripts Manager
+GenericName=Repository Management Tool
+Comment=Manage and cleanup git repositories with Elixir TUI
+Exec=/var/mnt/eclipse/repos/git-scripts/launchers/git-scripts-launcher-enhanced.sh
+Icon=terminal
+Terminal=true
+Categories=Development;
+Keywords=git;repository;cleanup;elixir;tui;
+StartupNotify=false
+MimeType=text/x-shellscript;
+Actions=TUI;Cleanup;Docs;
+
+[Desktop Action TUI]
+Name=Launch TUI Directly
+Exec=/var/mnt/eclipse/repos/git-scripts/launchers/git-scripts-launcher-enhanced.sh
+
+[Desktop Action Cleanup]
+Name=Run Repository Cleanup
+Exec=/var/mnt/eclipse/cleanup_scripts/comprehensive_cleanup.sh
+
+[Desktop Action Docs]
+Name=View Documentation
+Exec=xdg-open /var/mnt/eclipse/repos/git-scripts/README_WEB.md

@@ -1,0 +1,91 @@
+# Changelog
+
+## [1.16.0](https://github.com/elixir-tesla/tesla/compare/v1.15.3...v1.16.0) (2026-01-01)
+
+
+### Features
+
+* add strict policy option for enforcing base URL ([#817](https://github.com/elixir-tesla/tesla/issues/817)) ([e476093](https://github.com/elixir-tesla/tesla/commit/e4760935caaca6f50b6e36a03ed3a5608eddb43f))
+* support function streams in multipart handling ([#801](https://github.com/elixir-tesla/tesla/issues/801)) ([dd8b206](https://github.com/elixir-tesla/tesla/commit/dd8b206df618ec54082294d924eb15b0a8aafcb7)), closes [#648](https://github.com/elixir-tesla/tesla/issues/648)
+
+
+### Bug Fixes
+
+* DecompressResponse middleware for multiple encodings and keep updated content-length header ([#809](https://github.com/elixir-tesla/tesla/issues/809)) ([288699e](https://github.com/elixir-tesla/tesla/commit/288699e8f597e41ff07d8f620c21afb03ca69dd0))
+* Handle breaking change in Finch.stream API ([#813](https://github.com/elixir-tesla/tesla/issues/813)) ([ce5ea80](https://github.com/elixir-tesla/tesla/commit/ce5ea80e8a244c7e15c9c4beb2a51ad55f332fe0))
+* Handle errors in streaming responses ([#819](https://github.com/elixir-tesla/tesla/issues/819)) ([e7806bf](https://github.com/elixir-tesla/tesla/commit/e7806bf8252e4f05b3e2e64aab587ea20b03a9a9))
+* Use Version module to check finch version ([#814](https://github.com/elixir-tesla/tesla/issues/814)) ([56f9568](https://github.com/elixir-tesla/tesla/commit/56f956818aa667c480171559c2897a8827256f28))
+
+## [1.15.3](https://github.com/elixir-tesla/tesla/compare/v1.15.2...v1.15.3) (2025-07-30)
+
+
+### Bug Fixes
+
+* Avoid crash then gzip-decompressing empty body ([#796](https://github.com/elixir-tesla/tesla/issues/796)) ([5bc9b82](https://github.com/elixir-tesla/tesla/commit/5bc9b82823b3238257619ea3d67f0985a3707d2b))
+
+## [1.15.2](https://github.com/elixir-tesla/tesla/compare/v1.15.1...v1.15.2) (2025-07-23)
+
+
+### Bug Fixes
+
+* suppress deprecation warning for :log_level option ([#794](https://github.com/elixir-tesla/tesla/issues/794)) ([478c16e](https://github.com/elixir-tesla/tesla/commit/478c16e79c7bad32bd70ffe51f52ad9dae071af6))
+* suppress deprecation warning for :log_level option based on configuration ([478c16e](https://github.com/elixir-tesla/tesla/commit/478c16e79c7bad32bd70ffe51f52ad9dae071af6))
+
+## [1.15.1](https://github.com/elixir-tesla/tesla/compare/v1.15.0...v1.15.1) (2025-07-23)
+
+
+### Bug Fixes
+
+* legacy log level handling to support atom values for backward compatibility ([5029174](https://github.com/elixir-tesla/tesla/commit/5029174d646a6f1d63088a8a947b4b44fb30b55f))
+
+## [1.15.0](https://github.com/elixir-tesla/tesla/compare/v1.14.3...v1.15.0) (2025-07-22)
+
+
+### Features
+
+* add logging options to use `:level` instead of deprecated `:log_level` ([#779](https://github.com/elixir-tesla/tesla/issues/779)) ([ffc3609](https://github.com/elixir-tesla/tesla/commit/ffc36097409175f2e9b15abaffde29e8c3b52fe7))
+
+
+### Bug Fixes
+
+* Handle non-list term being emitted from Stream.chunk_while in SSE ([#788](https://github.com/elixir-tesla/tesla/issues/788)) ([0e9cf8d](https://github.com/elixir-tesla/tesla/commit/0e9cf8d30a8b3a4431bc69d2382afde2903f2499))
+
+## [1.14.3](https://github.com/elixir-tesla/tesla/compare/v1.14.2...v1.14.3) (2025-06-02)
+
+
+### Bug Fixes
+
+* Handle carriage return \r line terminators in SSE ([1efe6e3](https://github.com/elixir-tesla/tesla/commit/1efe6e3fb426950697f4fcd7cda2bf9197ea4477))
+* handle carriage return \r line terminators in SSE ([#772](https://github.com/elixir-tesla/tesla/issues/772)) ([1efe6e3](https://github.com/elixir-tesla/tesla/commit/1efe6e3fb426950697f4fcd7cda2bf9197ea4477))
+* Handle named ancestors in Tesla.Mock ([#774](https://github.com/elixir-tesla/tesla/issues/774)) ([6cf380e](https://github.com/elixir-tesla/tesla/commit/6cf380e56ce04308a96d94c814e211aef063cf76))
+
+## [1.14.2](https://github.com/elixir-tesla/tesla/compare/v1.14.1...v1.14.2) (2025-05-02)
+
+
+### Bug Fixes
+
+* bring back searching for mocks in ancestors ([#771](https://github.com/elixir-tesla/tesla/issues/771)) ([601e7b6](https://github.com/elixir-tesla/tesla/commit/601e7b69714acf63a6800945f66fa79a21d7d823))
+* fix race condition in Tesla.Mock.agent_set ([8cf7745](https://github.com/elixir-tesla/tesla/commit/8cf7745179088ea96f5b4c7f2f05b2b7046b5677))
+* handle HTTP response trailers when use Finch + stream ([#767](https://github.com/elixir-tesla/tesla/issues/767)) ([727cb0f](https://github.com/elixir-tesla/tesla/commit/727cb0f18369e7d307df5c051b2060c07477586a))
+* move regexes out of module attributes to fix compatibility with OTP 28 ([#763](https://github.com/elixir-tesla/tesla/issues/763)) ([1196bc6](https://github.com/elixir-tesla/tesla/commit/1196bc600e30d0d9e38d72fcc6ccf1863054bb33))
+
+## [1.14.1](https://github.com/elixir-tesla/tesla/compare/v1.14.0...v1.14.1) (2025-02-22)
+
+
+### Bug Fixes
+
+* add basic Hackney 1.22 support: {:connect_error, _} ([#754](https://github.com/elixir-tesla/tesla/issues/754)) ([127db9f](https://github.com/elixir-tesla/tesla/commit/127db9f0f4632cf290ce76d61bd1407367676266)), closes [#753](https://github.com/elixir-tesla/tesla/issues/753)
+
+## [1.14.0](https://github.com/elixir-tesla/tesla/compare/v1.13.2...v1.14.0) (2025-02-03)
+
+
+### Features
+
+* release-please and conventional commit ([#719](https://github.com/elixir-tesla/tesla/issues/719)) ([c9f6a1c](https://github.com/elixir-tesla/tesla/commit/c9f6a1c917d707e849d51a09557b453a8f9f012f))
+* support retry-after header in retry middleware ([#639](https://github.com/elixir-tesla/tesla/issues/639)) ([86ad37d](https://github.com/elixir-tesla/tesla/commit/86ad37dec511ca00047a2640510a4c6c92acf636))
+* Tesla.Middleware.JSON: Add support for Elixir 1.18's JSON module ([#747](https://github.com/elixir-tesla/tesla/issues/747)) ([1413167](https://github.com/elixir-tesla/tesla/commit/1413167f5408585405b8812f307897a6501b693a))
+
+
+### Bug Fixes
+
+* mocks for supervised tasks ([#750](https://github.com/elixir-tesla/tesla/issues/750)) ([2f6b2a6](https://github.com/elixir-tesla/tesla/commit/2f6b2a646c9bff3888b7aa0f4fc4440a2b5c97ee))

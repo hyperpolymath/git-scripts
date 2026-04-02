@@ -1,0 +1,147 @@
+# RSR-compliant .gitignore
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# Build artifacts
+target/
+dist-newstyle/
+*.hi
+*.o
+*.a
+
+# Elixir
+_build/
+deps/
+erl_crash.dump
+*.ez
+*.beam
+
+# Dependencies
+node_modules/
+
+# KDE
+.directory
+
+# Rust - Keep workspace Cargo.lock for reproducible builds
+
+# Haskell
+.stack-work/
+.cabal-sandbox/
+cabal.sandbox.config
+*.dyn_hi
+*.dyn_o
+
+# IDE/Editor
+.idea/
+.vscode/
+*.swp
+*~
+*.bak
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.envrc
+.env.local
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# Zig
+.zig-cache/
+zig-out/
+
+# Idris2
+build/
+
+# AI crash captures
+ai-cli-crash-capture/
+
+# Built binaries
+hypatia-v2
+elixir-scanner/hypatia
+
+# Sync artifacts
+sync_report*.txt
+
+# Machine-readable locks
+.machine_readable/.locks/
+
+# Local development
+.local/
+tmp/
+
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+
+# Build
+/target/
+/_build/
+/build/
+/dist/
+/out/
+/zig-out/
+/zig-cache/
+
+
+# Rust
+
+# Cargo.lock  # Keep for binaries
+
+
+# Julia
+*.jl.cov
+*.jl.mem
+/Manifest.toml
+
+
+# ReScript
+/lib/bs/
+/.bsb.lock
+
+
+# Python (SaltStack only)
+__pycache__/
+*.py[cod]
+.venv/
+
+
+# Ada/SPARK
+*.ali
+/obj/
+/bin/
+
+
+# Chapel
+*.chpl.tmp.*
+
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+
+# Test/Coverage
+/coverage/
+htmlcov/
+
+
+# Temp
+/tmp/
+*.tmp
+*.bak
+# asdf version manager
+.tool-versions
