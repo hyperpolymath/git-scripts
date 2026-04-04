@@ -35,7 +35,9 @@ defmodule ScriptManager.MixProject do
       # {:sweet_xml, "~> 0.7"},  # XML parsing
       # {:ex2ms, "~> 1.6"}       # Excel generation
       {:http_capability_gateway, git: "https://github.com/hyperpolymath/http-capability-gateway.git"},
-      {:gossamer, git: "https://github.com/hyperpolymath/gossamer.git"}
+      # gossamer is a Rust/multi-lang project — Elixir bindings not yet published
+      # {:gossamer, git: "https://github.com/hyperpolymath/gossamer.git"},
+      {:stream_data, "~> 1.0", only: :test}  # Property-based testing
     ]
   end
 end

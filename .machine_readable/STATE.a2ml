@@ -1,0 +1,51 @@
+; SPDX-License-Identifier: PMPL-1.0-or-later
+; Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+;
+; .machine_readable/STATE.a2ml
+; Machine-readable project state for git-scripts.
+
+(state
+  (metadata
+    (repo "git-scripts")
+    (version "0.1.0")
+    (language "elixir")
+    (last-updated "2026-04-04"))
+
+  (project-context
+    (description "Elixir script manager for GitHub automation tasks")
+    (primary-language "elixir")
+    (key-modules
+      "ScriptManager.SimpleJSON"
+      "ScriptManager.GitHubAPI"
+      "ScriptManager.PRProcessor"
+      "ScriptManager.HealthDashboard"
+      "ScriptManager.HTTPClient"))
+
+  (crg
+    (grade "C")
+    (achieved-date "2026-04-04")
+    (test-categories
+      (unit       "yes" (location "test/script_manager_test.exs") (count 21))
+      (smoke      "yes" (location "test/script_manager_test.exs") (count 6))
+      (property   "yes" (location "test/script_manager_test.exs") (count 5))
+      (e2e        "yes" (location "test/script_manager_test.exs") (count 3))
+      (contract   "yes" (location "test/script_manager_test.exs") (count 5))
+      (aspect     "yes" (location "test/script_manager_test.exs") (count 7))
+      (benchmarks "pending" (note "ExBenchmark not yet added; Criterion equivalent pending"))))
+
+  (current-position
+    (milestone "CRG Grade C achieved")
+    (next-milestone "CRG Grade B (6 quality targets)"))
+
+  (blockers-and-issues
+    (blocker "Gossamer Elixir bindings not published as Hex package"
+             (severity "medium")
+             (workaround "web_interface.ex stubbed without use Gossamer.Web"))
+    (blocker "gossamer git dep has no mix.exs — temporarily commented out"
+             (severity "low")
+             (workaround "dep commented in mix.exs pending Hex release")))
+
+  (critical-next-actions
+    (action "Add benchmarks via Benchee when gossamer blocker resolved")
+    (action "Publish gossamer as a Hex package to unblock dep")
+    (action "Upgrade to CRG Grade B: 6 quality targets")))
