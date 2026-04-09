@@ -10,6 +10,10 @@ defmodule ScriptManager.TUI do
   end
 
   defp menu do
+    loop()
+  end
+  
+  defp loop do
     IO.puts("\n[1] Wiki Audit")
     IO.puts("[2] Project Tabs Audit")
     IO.puts("[3] Branch Protection Apply")
@@ -41,27 +45,55 @@ defmodule ScriptManager.TUI do
       end
     
     case choice do
-      "1" -> ScriptManager.WikiAudit.run()
-      "2" -> ScriptManager.ProjectTabsAudit.run()
-      "3" -> ScriptManager.BranchProtection.run()
-      "4" -> ScriptManager.MDConverter.run()
-      "5" -> ScriptManager.ReadmeStandardizer.run()
-      "6" -> ScriptManager.RepoUpdater.run()
-      "7" -> ScriptManager.ScriptAuditor.run()
-      "8" -> ScriptManager.Verifier.run()
-      "9" -> ScriptManager.GHCLI.run()
-      "10" -> ScriptManager.PRProcessor.process_all("hyperpolymath", :add_labels)
-      "11" -> ScriptManager.HealthDashboard.generate_report()
-      "12" -> ScriptManager.RepoCleanup.run()
-      "13" -> run_clean_unicode()
-      "14" -> IO.puts("\n📦 Dependency Updater - Coming Soon!")
-      "15" -> IO.puts("\n🎉 Release Manager - Coming Soon!")
+      "1" -> 
+        ScriptManager.WikiAudit.run()
+        loop()
+      "2" -> 
+        ScriptManager.ProjectTabsAudit.run()
+        loop()
+      "3" -> 
+        ScriptManager.BranchProtection.run()
+        loop()
+      "4" -> 
+        ScriptManager.MDConverter.run()
+        loop()
+      "5" -> 
+        ScriptManager.ReadmeStandardizer.run()
+        loop()
+      "6" -> 
+        ScriptManager.RepoUpdater.run()
+        loop()
+      "7" -> 
+        ScriptManager.ScriptAuditor.run()
+        loop()
+      "8" -> 
+        ScriptManager.Verifier.run()
+        loop()
+      "9" -> 
+        ScriptManager.GHCLI.run()
+        loop()
+      "10" -> 
+        ScriptManager.PRProcessor.process_all("hyperpolymath", :add_labels)
+        loop()
+      "11" -> 
+        ScriptManager.HealthDashboard.generate_report()
+        loop()
+      "12" -> 
+        ScriptManager.RepoCleanup.run()
+        loop()
+      "13" -> 
+        run_clean_unicode()
+        loop()
+      "14" -> 
+        IO.puts("\n📦 Dependency Updater - Coming Soon!")
+        loop()
+      "15" -> 
+        IO.puts("\n🎉 Release Manager - Coming Soon!")
+        loop()
       "0" -> IO.puts("\nGoodbye!")
-      _ -> IO.puts("\nInvalid choice, please try again")
-    end
-    
-    if choice != "0" do
-      menu()
+      _ -> 
+        IO.puts("\nInvalid choice, please try again")
+        loop()
     end
   end
 

@@ -1,6 +1,12 @@
 #!/bin/bash
-REPOS=("aerie" "ambientops" "Axiom.jl" "boj-server-gemini" "excel-economic-numbers-tool" "explicit-trust-plane" "feedback-o-tron" "filesoup" "fireflag" "flat-mate" "games & trivia" "gitbot-fleet" "hesiod-dns-map" "idaptik" "rescript" "flatracoon" "neural-foundations" "standards" "wordpress-tools")
-BASE_DIR="/var$REPOS_DIR"
+
+# Source shared configuration
+if [ -f "/var/mnt/eclipse/repos/git-scripts/config/repos.config" ]; then
+    source "/var/mnt/eclipse/repos/git-scripts/config/repos.config"
+else
+    echo "Error: Configuration file not found: /var/mnt/eclipse/repos/git-scripts/config/repos.config" >&2
+    exit 1
+fi
 
 echo "Repository | Local Commit | Remote Commit | Match?"
 echo "---|---|---|---"

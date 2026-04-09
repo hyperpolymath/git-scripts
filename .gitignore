@@ -14,6 +14,9 @@ erl_crash.dump
 *.ez
 *.beam
 
+# Binary artifacts
+bin/
+
 # Dependencies
 node_modules/
 

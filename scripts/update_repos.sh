@@ -1,9 +1,12 @@
 #!/bin/bash
 
-REPOS=("aerie" "ambientops" "Axiom.jl" "boj-server-gemini" "developer-ecosystem" "excel-economic-numbers-tool" "explicit-trust-plane" "feedback-o-tron" "filesoup" "fireflag" "flat-mate" "games & trivia" "gitbot-fleet" "hesiod-dns-map" "HOL" "hypatia" "idaptik" "maa-framework" "polystack" "refugia" "reposystem" "rescript" "rrecord-verity" "flatracoon" "neural-foundations" "standards" "wordpress-tools")
-COMMIT_REPOS=("flatracoon" "neural-foundations" "standards" "wordpress-tools")
-
-BASE_DIR="/var$REPOS_DIR"
+# Source shared configuration
+if [ -f "/var/mnt/eclipse/repos/git-scripts/config/repos.config" ]; then
+    source "/var/mnt/eclipse/repos/git-scripts/config/repos.config"
+else
+    echo "Error: Configuration file not found: /var/mnt/eclipse/repos/git-scripts/config/repos.config" >&2
+    exit 1
+fi
 FAILURES=()
 
 for REPO in "${REPOS[@]}"; do

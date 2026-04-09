@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Name=Git Scripts
+Exec=/var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --auto
+Icon=utilities-terminal
+Terminal=false
+Categories=Development;Utility;System;
+StartupNotify=true
+
+# Actions for additional functionality
+Actions=stop;status;
+
+[Desktop Action stop]
+Name=Stop Git Scripts
+Exec=/var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --stop
+
+[Desktop Action status]
+Name=Git Scripts Status
+Exec=/var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --status
