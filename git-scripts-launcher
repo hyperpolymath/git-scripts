@@ -19,6 +19,13 @@ PID_FILE="/tmp/${APP_NAME,,}-server.pid"
 LOG_FILE="/tmp/${APP_NAME,,}-server.log"
 MODE="${1:---auto}"
 DESKTOP_FILE="$REPO_DIR/git-scripts.desktop"
+SCRIPT_MANAGER="${REPO_DIR}/script_manager"
+INTERACTIVE_ERR_LOG="/tmp/gitscripts-interactive.err"
+INTERACTIVE_RUN_LOG="/tmp/gitscripts-interactive.log"
+PREFLIGHT_ERR_LOG="/tmp/gitscripts-preflight.err"
+BUILD_LOG="/tmp/gitscripts-escript-build.log"
+ESCRIPT_BUILD_PATH="${REPO_DIR}/_build/script_manager.escript"
+REBUILD_LOCK_FILE="/tmp/gitscripts-escript-rebuild.lock"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -88,11 +95,159 @@ start_server() {
     
     return 1
   fi
+
+  # Guard against processes that start and immediately crash.
+  sleep 1
+  if ! is_running; then
+    err "Git Scripts exited immediately after launch"
+    err "Check log: $LOG_FILE"
+    if [[ -s "$LOG_FILE" ]]; then
+      err "Recent log output:"
+      tail -50 "$LOG_FILE" >&2 || true
+    fi
+    rm -f "$PID_FILE"
+    return 1
+  fi
   
   log "Git Scripts started successfully"
   log "Log file: $LOG_FILE"
   
   return 0
+}
+
+run_interactive() {
+  if [[ ! -x "${SCRIPT_MANAGER}" ]]; then
+    warn "script_manager missing or not executable; attempting rebuild..."
+    rebuild_script_manager || return 1
+  fi
+
+  local preflight_status=0
+  script_manager_preflight || preflight_status=$?
+  if [[ ${preflight_status} -eq 2 ]]; then
+    warn "Detected a corrupted script_manager escript. Rebuilding..."
+    rebuild_script_manager || return 1
+  elif [[ ${preflight_status} -ne 0 ]]; then
+    return "${preflight_status}"
+  fi
+
+  cd "$REPO_DIR"
+  : > "${INTERACTIVE_ERR_LOG}"
+  : > "${INTERACTIVE_RUN_LOG}"
+
+  set +e
+  SCRIPT_MANAGER_DISABLE_WEB=1 "${SCRIPT_MANAGER}" 2>&1 | tee "${INTERACTIVE_RUN_LOG}"
+  local status=${PIPESTATUS[0]}
+  cat "${INTERACTIVE_RUN_LOG}" > "${INTERACTIVE_ERR_LOG}" || true
+  set -e
+
+  if grep -Eq 'corrupt atom table|script_manager_escript:main/1|nil_escript:main/1' "${INTERACTIVE_ERR_LOG}"; then
+    warn "Detected a corrupted script_manager escript. Rebuilding and retrying..."
+    rebuild_script_manager || return 1
+    : > "${INTERACTIVE_ERR_LOG}"
+    : > "${INTERACTIVE_RUN_LOG}"
+    set +e
+    SCRIPT_MANAGER_DISABLE_WEB=1 "${SCRIPT_MANAGER}" 2>&1 | tee "${INTERACTIVE_RUN_LOG}"
+    status=${PIPESTATUS[0]}
+    cat "${INTERACTIVE_RUN_LOG}" > "${INTERACTIVE_ERR_LOG}" || true
+    set -e
+  fi
+
+  return "${status}"
+}
+
+script_manager_preflight() {
+  : > "${PREFLIGHT_ERR_LOG}"
+
+  set +e
+  SCRIPT_MANAGER_DISABLE_WEB=1 "${SCRIPT_MANAGER}" </dev/null >/dev/null 2>"${PREFLIGHT_ERR_LOG}"
+  local status=$?
+  set -e
+
+  if [[ ${status} -eq 0 ]]; then
+    return 0
+  fi
+
+  if grep -Eq 'corrupt atom table|script_manager_escript:main/1|nil_escript:main/1' "${PREFLIGHT_ERR_LOG}"; then
+    return 2
+  fi
+
+  err "script_manager preflight failed (exit ${status})"
+  tail -20 "${PREFLIGHT_ERR_LOG}" >&2 || true
+  return "${status}"
+}
+
+rebuild_script_manager() {
+  if ! command -v mix >/dev/null 2>&1; then
+    err "mix is required to rebuild script_manager"
+    return 1
+  fi
+
+  # Serialize rebuilds to avoid concurrent partial updates from multiple clicks.
+  local lock_fd=""
+  if command -v flock >/dev/null 2>&1; then
+    exec {lock_fd}> "${REBUILD_LOCK_FILE}"
+    if ! flock -w 300 "${lock_fd}"; then
+      err "Timed out waiting for rebuild lock: ${REBUILD_LOCK_FILE}"
+      return 1
+    fi
+  fi
+
+  # Another instance may have already rebuilt a healthy artifact.
+  local preflight_status=0
+  script_manager_preflight || preflight_status=$?
+  if [[ ${preflight_status} -eq 0 ]]; then
+    log "script_manager is already healthy; skipping rebuild."
+    return 0
+  fi
+
+  log "Rebuilding script_manager escript..."
+  log "This can take 20-60 seconds depending on cache state. Please wait."
+  : > "${BUILD_LOG}"
+  (
+    cd "${REPO_DIR}"
+    mix escript.build >"${BUILD_LOG}" 2>&1
+  ) &
+  local build_pid=$!
+  local last_size="-1"
+
+  while kill -0 "${build_pid}" 2>/dev/null; do
+    sleep 5
+    local size="0"
+    if [[ -f "${BUILD_LOG}" ]]; then
+      size="$(wc -c < "${BUILD_LOG}" 2>/dev/null || echo 0)"
+    fi
+
+    if [[ "${size}" != "${last_size}" ]]; then
+      local latest=""
+      latest="$(tail -n 1 "${BUILD_LOG}" 2>/dev/null | sed 's/^[[:space:]]*//')"
+      if [[ -n "${latest}" ]]; then
+        log "Build progress: ${latest}"
+      else
+        log "Build progress: compiling..."
+      fi
+      last_size="${size}"
+    else
+      log "Build still running..."
+    fi
+  done
+
+  if wait "${build_pid}"; then
+    if [[ ! -s "${ESCRIPT_BUILD_PATH}" ]]; then
+      err "Expected build artifact missing: ${ESCRIPT_BUILD_PATH}"
+      return 1
+    fi
+
+    local tmp_target="${SCRIPT_MANAGER}.new.$$"
+    cp "${ESCRIPT_BUILD_PATH}" "${tmp_target}"
+    chmod +x "${tmp_target}" 2>/dev/null || true
+    mv -f "${tmp_target}" "${SCRIPT_MANAGER}"
+    log "Rebuild complete"
+    return 0
+  fi
+
+  err "Rebuild failed. Build log: ${BUILD_LOG}"
+  tail -50 "${BUILD_LOG}" >&2 || true
+  return 1
 }
 
 stop_server() {
@@ -231,6 +386,7 @@ show_help() {
   echo "  --stop        Stop the running Git Scripts instance"
   echo "  --status      Show current status"
   echo "  --install     Install desktop shortcuts (Linux/macOS/Windows)"
+  echo "  --interactive Run script_manager in the current terminal"
   echo "  --auto        Start TUI (default)"
   echo "  --help        Show this help message"
   echo "  --version     Show version information"
@@ -276,6 +432,10 @@ case "$MODE" in
   
   --install)
     install_shortcuts
+    ;;
+
+  --interactive)
+    run_interactive
     ;;
   
   --help|-h|--?)

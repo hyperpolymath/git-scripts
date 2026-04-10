@@ -1,8 +1,9 @@
 defmodule ScriptManager.MDConverter do
   @moduledoc "MD to ADOC converter"
+
   def run do
-    IO.puts("📄 MD TO ADOC CONVERTER")
-    IO.puts("Converting Markdown files to AsciiDoc...")
-    IO.puts("✅ Conversion complete!")
+    IO.puts("\n📄 MD TO ADOC CONVERTER")
+    IO.puts("=======================")
+    ScriptManager.ScriptRunner.run_script("md_to_adoc_converter.sh")
   end
 end

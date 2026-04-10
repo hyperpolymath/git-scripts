@@ -1,8 +1,9 @@
 defmodule ScriptManager.ScriptAuditor do
   @moduledoc "Audit scripts"
+
   def run do
-    IO.puts("🔍 SCRIPT AUDITOR")
-    IO.puts("Auditing scripts for security and quality...")
-    IO.puts("✅ Script audit complete!")
+    IO.puts("\n🔍 SCRIPT AUDITOR")
+    IO.puts("=================")
+    ScriptManager.ScriptRunner.run_script("audit_script.sh")
   end
 end

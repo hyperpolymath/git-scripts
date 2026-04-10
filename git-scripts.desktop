@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Git Scripts
-Exec=/var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --auto
+Exec=/var/mnt/eclipse/repos/.desktop-tools/run-with-pause.sh /var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --interactive
 Icon=utilities-terminal
-Terminal=false
+Terminal=true
 Categories=Development;Utility;System;
 StartupNotify=true
 
@@ -12,8 +12,8 @@ Actions=stop;status;
 
 [Desktop Action stop]
 Name=Stop Git Scripts
-Exec=/var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --stop
+Exec=/var/mnt/eclipse/repos/.desktop-tools/run-with-pause.sh /var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --stop
 
 [Desktop Action status]
 Name=Git Scripts Status
-Exec=/var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --status
+Exec=/var/mnt/eclipse/repos/.desktop-tools/run-with-pause.sh /var/mnt/eclipse/repos/git-scripts/git-scripts-launcher --status
