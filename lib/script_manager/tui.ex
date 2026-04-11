@@ -29,6 +29,9 @@ defmodule ScriptManager.TUI do
     IO.puts("[13] Clean Unicode")
     IO.puts("[14] Dependency Updater")
     IO.puts("[15] Release Manager")
+    IO.puts("[16] Contractile Audit")
+    IO.puts("[17] Batch Deploy (30 at a time)")
+    IO.puts("[18] Mass Deploy (entire estate)")
     IO.puts("[0] Exit")
     
     IO.write("\nSelect option: ")
@@ -87,8 +90,17 @@ defmodule ScriptManager.TUI do
       "14" -> 
         IO.puts("\n📦 Dependency Updater - Coming Soon!")
         loop()
-      "15" -> 
+      "15" ->
         IO.puts("\n🎉 Release Manager - Coming Soon!")
+        loop()
+      "16" ->
+        ScriptManager.ContractileAuditor.run()
+        loop()
+      "17" ->
+        ScriptManager.BatchDeployer.run()
+        loop()
+      "18" ->
+        ScriptManager.MassDeployer.run()
         loop()
       "0" -> IO.puts("\nGoodbye!")
       _ -> 
