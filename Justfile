@@ -2,6 +2,8 @@
 # Justfile for git-scripts
 
 # Default recipe — list available commands
+import? "contractile.just"
+
 default:
     @just --list
 

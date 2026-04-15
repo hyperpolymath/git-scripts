@@ -4,12 +4,12 @@ if [ -z "$TOKEN" ]; then
     echo "GITHUB_TOKEN is required" >&2
     exit 1
 fi
-REPOS_DIR="/var$REPOS_DIR"
-CONFIG_FILE="/var$REPOS_DIR/gitleaks_config.toml"
-GLOBAL_IGNORE="/var$REPOS_DIR/global_gitleaksignore"
+REPOS_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
+CONFIG_FILE="$REPOS_DIR/gitleaks_config.toml"
+GLOBAL_IGNORE="$REPOS_DIR/global_gitleaksignore"
 
 # Create global ignore from boj-server
-cp "/var$REPOS_DIR/boj-server/.gitleaksignore" "$GLOBAL_IGNORE" 2>/dev/null || touch "$GLOBAL_IGNORE"
+cp "$REPOS_DIR/boj-server/.gitleaksignore" "$GLOBAL_IGNORE" 2>/dev/null || touch "$GLOBAL_IGNORE"
 
 echo "| Repo | Gitleaks Findings | Dependabot Alerts (Crit/High) | Status |"
 echo "| --- | --- | --- | --- |"

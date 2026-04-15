@@ -3,9 +3,14 @@
 # README Standardization Script
 # Converts all README files to README.adoc format and eliminates duplicates
 
-REPOS_DIR="/var$REPOS_DIR"
+REPOS_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
 LOG_FILE="$HOME/Desktop/readme_standardization.log"
 BACKUP_DIR="$HOME/Desktop/readme_backups"
+
+if ! command -v pandoc >/dev/null 2>&1; then
+    echo "Error: pandoc is not installed. Please install it to use this script."
+    exit 1
+fi
 
 echo "Starting README standardization process..."
 echo "$(date) - Starting README standardization" > "$LOG_FILE"

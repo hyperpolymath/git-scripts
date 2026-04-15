@@ -32,14 +32,9 @@ defmodule ScriptManager.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      # {:tesla, "~> 1.4"},      # HTTP client - replaced by HTTP Capability Gateway
-      # {:jason, "~> 1.2"},       # JSON parser - replaced by SimpleJSON
-      # {:poison, "~> 5.0"},     # JSON library - replaced by SimpleJSON
-      # {:sweet_xml, "~> 0.7"},  # XML parsing
-      # {:ex2ms, "~> 1.6"}       # Excel generation
+      {:jason, "~> 1.4"},       # JSON parser
+      {:req, "~> 0.5"},         # HTTP client
       {:http_capability_gateway, git: "https://github.com/hyperpolymath/http-capability-gateway.git", runtime: false},
-      # gossamer is a Rust/multi-lang project — Elixir bindings not yet published
-      # {:gossamer, git: "https://github.com/hyperpolymath/gossamer.git"},
       {:stream_data, "~> 1.0", only: :test}  # Property-based testing
     ]
   end

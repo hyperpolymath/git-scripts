@@ -29,7 +29,8 @@ convert_markdown_to_adoc() {
 }
 
 # Find all remaining README.md files and convert them
-find /var$REPOS_DIR -maxdepth 2 -name "README.md" -type f | while read md_file; do
+REPOS_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
+find "$REPOS_DIR" -maxdepth 2 -name "README.md" -type f | while read md_file; do
     repo_dir=$(dirname "$md_file")
     adoc_file="$repo_dir/README.adoc"
     

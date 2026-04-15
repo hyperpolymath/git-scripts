@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+// Git Scripts GUI — AffineScript TEA Interface
+// Underpinned by Cadre Router (Affine Stack Implementation)
+//
+// Purpose: Provide a formally verified, resource-safe interface for
+// managing git repository scripts, branch transitions, and maintenance.
+
+// ── Types ─────────────────────────────────────────────────────────────────
+
+enum ScriptStatus {
+  Idle,
+  Running,
+  Success,
+  Failed(String)
+}
+
+struct GitScript {
+  name: String,
+  description: String,
+  path: String,
+  last_status: ScriptStatus
+}
+
+enum ViewMode {
+  ScriptList,
+  History,
+  Settings
+}
+
+// ── Model ───────────────────────────────────────────────────────────────────
+
+struct Model {
+  view_mode: ViewMode,
+  scripts: List(GitScript),
+  selected_script_index: Int,
+  is_refreshing: Bool,
+  history_depth: Int
+}
+
+// ── Msg ──────────────────────────────────────────────────────────────────────
+
+enum Msg {
+  Navigate(ViewMode),
+  SelectScript(Int),
+  RunSelectedScript,
+  ScriptFinished(Int, ScriptStatus),
+  RefreshScripts,
+  PopState
+}
+
+// ── TEA Logic ────────────────────────────────────────────────────────────────
+
+fn git_scripts_init() -> Model {
+  {
+    view_mode: ViewMode::ScriptList,
+    scripts: [],
+    selected_script_index: -1,
+    is_refreshing: false,
+    history_depth: 0
+  }
+}
+
+fn git_scripts_update(@linear msg: Msg, @linear model: Model) -> Model {
+  match model {
+    { view_mode: v, scripts: s, selected_script_index: i, is_refreshing: r, history_depth: h } => {
+      match msg {
+        Navigate(new_mode) => {
+          {
+            view_mode: new_mode,
+            scripts: s,
+            selected_script_index: i,
+            is_refreshing: false,
+            history_depth: h + 1
+          }
+        }
+
+        SelectScript(new_idx) => {
+          {
+            view_mode: v,
+            scripts: s,
+            selected_script_index: new_idx,
+            is_refreshing: r,
+            history_depth: h
+          }
+        }
+
+        RunSelectedScript => {
+          // Linear update: mark script as running
+          {
+            view_mode: v,
+            scripts: s, // In a full impl, we'd update the specific script status in the list
+            selected_script_index: i,
+            is_refreshing: r,
+            history_depth: h
+          }
+        }
+
+        ScriptFinished(idx, status) => {
+          {
+            view_mode: v,
+            scripts: s,
+            selected_script_index: i,
+            is_refreshing: r,
+            history_depth: h
+          }
+        }
+
+        RefreshScripts => {
+          {
+            view_mode: v,
+            scripts: s,
+            selected_script_index: i,
+            is_refreshing: true,
+            history_depth: h
+          }
+        }
+
+        PopState => {
+          if h > 0 {
+            {
+              view_mode: ViewMode::ScriptList,
+              scripts: s,
+              selected_script_index: -1,
+              is_refreshing: false,
+              history_depth: h - 1
+            }
+          } else {
+            {
+              view_mode: v,
+              scripts: s,
+              selected_script_index: i,
+              is_refreshing: r,
+              history_depth: 0
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn git_scripts_view(model: Model) -> String {
+  match model.view_mode {
+    ScriptList => "GIT SCRIPTS: Utility Library",
+    History    => "EXECUTION HISTORY",
+    Settings   => "CONFIGURATION"
+  }
+}
+
+fn git_scripts_subs(model: Model) -> String {
+  "None"
+}

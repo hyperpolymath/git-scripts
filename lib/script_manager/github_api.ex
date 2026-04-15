@@ -6,6 +6,8 @@ defmodule ScriptManager.GitHubAPI do
   @base_url "https://api.github.com"
   @token Application.compile_env(:script_manager, :github)[:token]
 
+  alias ScriptManager.SimpleJSON
+
   @doc """
   Get all open pull requests for an organization
   """

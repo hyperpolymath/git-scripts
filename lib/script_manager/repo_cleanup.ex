@@ -34,7 +34,7 @@ defmodule ScriptManager.RepoCleanup do
     IO.puts("Estimated time: 10-30 minutes")
     
     # Execute the comprehensive cleanup script
-    result = System.cmd("/var/mnt/eclipse/cleanup_scripts/comprehensive_cleanup.sh", ["&"])
+    _result = System.cmd("/var/mnt/eclipse/cleanup_scripts/comprehensive_cleanup.sh", ["&"])
     
     IO.puts("✅ Comprehensive cleanup started in background")
     IO.puts("Check logs: /var/mnt/eclipse/repos/comprehensive_cleanup_output.log")
@@ -48,7 +48,7 @@ defmodule ScriptManager.RepoCleanup do
     IO.puts("Processing 10 key repositories...")
     
     # Execute the focused cleanup script
-    result = System.cmd("/var/mnt/eclipse/cleanup_scripts/focused_cleanup.sh")
+    _result = System.cmd("/var/mnt/eclipse/cleanup_scripts/focused_cleanup.sh", [])
     
     IO.puts("✅ Targeted cleanup completed!")
     IO.puts("Check results: /var/mnt/eclipse/repos/cleanup_logs/success_*.log")
@@ -60,7 +60,7 @@ defmodule ScriptManager.RepoCleanup do
     IO.puts("\n🔍 Analyzing repositories...")
     
     # Execute the analysis script
-    result = System.cmd("/var/mnt/eclipse/cleanup_scripts/cleanup_repos.sh")
+    _result = System.cmd("/var/mnt/eclipse/cleanup_scripts/cleanup_repos.sh", [])
     
     IO.puts("✅ Analysis completed!")
     IO.puts("Report generated: /var/mnt/eclipse/repos/REPOSITORY_CLEANUP_REPORT.md")

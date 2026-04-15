@@ -4,9 +4,16 @@
 if [ -f "/var/mnt/eclipse/repos/git-scripts/config/repos.config" ]; then
     source "/var/mnt/eclipse/repos/git-scripts/config/repos.config"
 else
-    echo "Error: Configuration file not found: /var/mnt/eclipse/repos/git-scripts/config/repos.config" >&2
-    exit 1
+    # Fallback if source fails or we're running from elsewhere
+    BASE_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
 fi
+
+if [[ -z "${REPOS:-}" ]]; then
+    echo "Warning: REPOS list is empty or not loaded."
+    # Attempt to find all repos if list is empty
+    mapfile -t REPOS < <(find "$BASE_DIR" -maxdepth 1 -type d -exec test -d "{}/.git" \; -print | xargs -n1 basename)
+fi
+
 FAILURES=()
 
 for REPO in "${REPOS[@]}"; do
@@ -21,6 +28,9 @@ for REPO in "${REPOS[@]}"; do
     
     cd "$REPO_PATH" || continue
     
+    # 0. Sync from remote first (Hiccup prevention)
+    git fetch --all --prune --quiet
+    
     # 1. Uncommitted Resolution
     for COMMIT_REPO in "${COMMIT_REPOS[@]}"; do
         if [ "$REPO" == "$COMMIT_REPO" ]; then
@@ -33,35 +43,51 @@ for REPO in "${REPOS[@]}"; do
         fi
     done
     
-    # 2. Force-Push
-    echo "Pusing $REPO..."
-    if ! git push --force 2>&1 | tee /tmp/git_push_out; then
-        # 3. Upstream Check
+    # 2. Negotiate hiccups (rebase if behind)
+    BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+        BEHIND=$(git rev-list --count "$BRANCH..origin/$BRANCH")
+        if [ "$BEHIND" -gt 0 ]; then
+            echo "$REPO is behind origin/$BRANCH by $BEHIND commits. Attempting rebase..."
+            if ! git rebase "origin/$BRANCH"; then
+                echo "Rebase failed for $REPO. Aborting."
+                git rebase --abort
+                FAILURES+=("$REPO (rebase conflict)")
+                continue
+            fi
+        fi
+    fi
+
+    # 3. Push
+    echo "Pushing $REPO..."
+    # Use --force-with-lease for safer negotiation if branch protection is off, 
+    # or just normal push if we just rebased.
+    if ! git push --force-with-lease 2>&1 | tee /tmp/git_push_out; then
+        # 4. Upstream Check
         if grep -q "has no upstream branch" /tmp/git_push_out || grep -q "The current branch .* has no upstream branch" /tmp/git_push_out; then
-            BRANCH=$(git rev-parse --abbrev-ref HEAD)
             echo "No upstream set for $REPO. Setting upstream origin $BRANCH..."
-            if ! git push --set-upstream origin "$BRANCH" --force; then
+            if ! git push --set-upstream origin "$BRANCH"; then
                 FAILURES+=("$REPO (push failed even with upstream)")
             fi
         else
-            FAILURES+=("$REPO (push failed: $(cat /tmp/git_push_out | head -n 1))")
+            FAIL_MSG=$(cat /tmp/git_push_out | head -n 1)
+            echo "Push failed for $REPO: $FAIL_MSG"
+            FAILURES+=("$REPO (push failed: $FAIL_MSG)")
         fi
     fi
     
-    # 4. Verification
+    # 5. Verification
     LATEST_LOCAL=$(git log -1 --pretty=format:"%s")
-    # Fetch to compare with remote
-    git fetch origin $(git rev-parse --abbrev-ref HEAD) &>/dev/null
-    LATEST_REMOTE=$(git log -1 --pretty=format:"%s" origin/$(git rev-parse --abbrev-ref HEAD) 2>/dev/null)
+    # Latest remote already fetched
+    LATEST_REMOTE=$(git log -1 --pretty=format:"%s" "origin/$BRANCH" 2>/dev/null || echo "NONE")
     
     echo "Local: $LATEST_LOCAL"
     echo "Remote: $LATEST_REMOTE"
     
-    if [[ "$LATEST_LOCAL" == "chore: RSR sync"* ]] && [[ "$LATEST_LOCAL" == "$LATEST_REMOTE" ]]; then
+    if [[ "$LATEST_LOCAL" == "$LATEST_REMOTE" ]]; then
         echo "Verification successful for $REPO"
     else
-        echo "Verification: Local and Remote might differ or commit message mismatch for $REPO"
-        # We don't mark as failure if it's just a message mismatch unless it failed to push
+        echo "Verification: Local and Remote might differ for $REPO"
     fi
     echo "-----------------------------------"
 done
