@@ -91,6 +91,8 @@ defmodule ScriptManager.TUI do
     IO.puts("[19] Media Finder")
     IO.puts("[20] Dependency Fixer")
     IO.puts("[21] Toolchain Linker")
+    IO.puts("[22] Launch NQC (Database Query)")
+    IO.puts("[23] Launch Invariant Path (Code Analysis)")
     IO.puts("\n[h]  Help - Detailed information")
     IO.puts("[s]  System Status")
     IO.puts("[0]  Exit")
@@ -130,6 +132,8 @@ defmodule ScriptManager.TUI do
       "19" -> safe_execute(&ScriptManager.MediaFinder.run/0, "Media Finder")
       "20" -> safe_execute(&ScriptManager.DependencyFixer.run/0, "Dependency Fixer")
       "21" -> safe_execute(&ScriptManager.ToolchainLinker.run/0, "Toolchain Linker")
+      "22" -> launch_nqc()
+      "23" -> launch_invariant_path()
       "h" -> show_help()
       "s" -> show_system_status()
       "0" -> IO.puts("\n👋 Goodbye!")
@@ -195,86 +199,6 @@ defmodule ScriptManager.TUI do
     end
   end
 
-  defp show_help do
-    IO.puts("\n" <> String.duplicate("=", 60))
-    IO.puts("HELP SYSTEM - Detailed Function Information")
-    IO.puts(String.duplicate("=", 60))
-    
-    help_items = %{
-      "1" => {
-        "Wiki Audit",
-        "Audits GitHub wiki status across repositories",
-        "Checks wiki enabled/disabled, content status, page count",
-        "Use to identify repos needing wiki setup or cleanup"
-      },
-      "2" => {
-        "Project Tabs Audit",
-        "Audits repository project tabs/configuration",
-        "Checks for proper tab setup and configuration",
-        "Use to ensure consistent project organization"
-      },
-      "3" => {
-        "Branch Protection Apply",
-        "Applies strict branch protection rules to repositories",
-        "Enforces signed commits, linear history, blocks force pushes",
-        "WARNING: Modifies repository settings - use with caution"
-      },
-      "4" => {
-        "MD to ADOC Converter",
-        "Converts Markdown files to AsciiDoc format",
-        "Preserves formatting and metadata",
-        "Use for documentation standardization"
-      },
-      "5" => {
-        "Standardize READMEs",
-        "Applies consistent README formatting across repositories",
-        "Ensures proper structure and content",
-        "Use to maintain documentation standards"
-      },
-      "6" => {
-        "Update Repos",
-        "Updates all repositories to latest versions",
-        "Pulls latest changes and updates dependencies",
-        "Use to keep repositories synchronized"
-      },
-      "7" => {
-        "Audit Scripts",
-        "Audits the script collection for issues",
-        "Checks for syntax errors, best practices, security issues",
-        "Use to maintain script quality"
-      },
-      "8" => {
-        "Verify",
-        "Verifies system and repository health",
-        "Checks for common issues and configuration problems",
-        "Use for troubleshooting and maintenance"
-      },
-      "9" => {
-        "Use GH CLI",
-        "GitHub CLI helper functions",
-        "Provides convenient GitHub operations",
-        "Use for GitHub repository management"
-      },
-      "10" => {
-        "Mass PR Processor",
-        "Processes pull requests across repositories",
-        "Can add labels, review, or perform other batch operations",
-        "Use for bulk PR management"
-      }
-    }
-    
-    Enum.each(help_items, fn {num, {name, desc, details, usage}} ->
-      IO.puts("\n[#{num}] #{name}")
-      IO.puts("   Description: #{desc}")
-      IO.puts("   Details: #{details}")
-      IO.puts("   Usage: #{usage}")
-    end)
-    
-    IO.puts("\n" <> String.duplicate("-", 60))
-    IO.puts("Press Enter to return to main menu...")
-    IO.gets("")
-  end
-
   defp show_system_status do
     IO.puts("\n" <> String.duplicate("=", 60))
     IO.puts("SYSTEM STATUS")
@@ -338,5 +262,132 @@ defmodule ScriptManager.TUI do
     end
     
     :ok
+  end
+
+  defp launch_nqc do
+    IO.puts("\n🚀 Launching NextGen Query Client...")
+    
+    nqc_launcher = "/var/mnt/eclipse/repos/nextgen-databases/nqc/nqc-enhanced-launcher.sh"
+    
+    if File.exists?(nqc_launcher) do
+      IO.puts("Starting NQC web interface...")
+      case System.cmd(nqc_launcher, ["--auto"]) do
+        {0, _} -> IO.puts("✅ NQC launched successfully")
+        {status, error} -> IO.puts("❌ Failed to launch NQC (exit #{status}): #{error}")
+      end
+    else
+      IO.puts("❌ NQC launcher not found: #{nqc_launcher}")
+      IO.puts("Please install NQC first")
+    end
+  end
+
+  defp launch_invariant_path do
+    IO.puts("\n🔍 Launching Invariant Path...")
+    
+    ip_launcher = "/var/mnt/eclipse/repos/invariant-path/invariant-path-launcher"
+    
+    if File.exists?(ip_launcher) do
+      IO.puts("Starting Invariant Path analysis tool...")
+      case System.cmd(ip_launcher, ["--auto"]) do
+        {0, _} -> IO.puts("✅ Invariant Path launched successfully")
+        {status, error} -> IO.puts("❌ Failed to launch Invariant Path (exit #{status}): #{error}")
+      end
+    else
+      IO.puts("❌ Invariant Path launcher not found: #{ip_launcher}")
+      IO.puts("Please install Invariant Path first")
+    end
+  end
+
+  defp show_help do
+    IO.puts("\n" <> String.duplicate("=", 60))
+    IO.puts("HELP SYSTEM - Detailed Function Information")
+    IO.puts(String.duplicate("=", 60))
+    
+    help_items = Map.merge(%{
+      "1" => {
+        "Wiki Audit",
+        "Audits GitHub wiki status across repositories",
+        "Checks wiki enabled/disabled, content status, page count",
+        "Use to identify repos needing wiki setup or cleanup"
+      },
+      "2" => {
+        "Project Tabs Audit",
+        "Audits repository project tabs/configuration",
+        "Checks for proper tab setup and configuration",
+        "Use to ensure consistent project organization"
+      },
+      "3" => {
+        "Branch Protection Apply",
+        "Applies strict branch protection rules to repositories",
+        "Enforces signed commits, linear history, blocks force pushes",
+        "WARNING: Modifies repository settings - use with caution"
+      },
+      "4" => {
+        "MD to ADOC Converter",
+        "Converts Markdown files to AsciiDoc format",
+        "Preserves formatting and metadata",
+        "Use for documentation standardization"
+      },
+      "5" => {
+        "Standardize READMEs",
+        "Applies consistent README formatting across repositories",
+        "Ensures proper structure and content",
+        "Use to maintain documentation standards"
+      },
+      "6" => {
+        "Update Repos",
+        "Updates all repositories to latest versions",
+        "Pulls latest changes and updates dependencies",
+        "Use to keep repositories synchronized"
+      },
+      "7" => {
+        "Audit Scripts",
+        "Audits the script collection for issues",
+        "Checks for syntax errors, best practices, security issues",
+        "Use to maintain script quality"
+      },
+      "8" => {
+        "Verify",
+        "Verifies system and repository health",
+        "Checks for common issues and configuration problems",
+        "Use for troubleshooting and maintenance"
+      },
+      "9" => {
+        "Use GH CLI",
+        "GitHub CLI helper functions",
+        "Provides convenient GitHub operations",
+        "Use for GitHub repository management"
+      },
+      "10" => {
+        "Mass PR Processor",
+        "Processes pull requests across repositories",
+        "Can add labels, review, or perform other batch operations",
+        "Use for bulk PR management"
+      }},
+      %{
+      "22" => {
+        "Launch NQC",
+        "Launches NextGen Query Client for database operations",
+        "Provides web interface for VQL/GQL/KQL queries",
+        "Use for database exploration and querying"
+      },
+      "23" => {
+        "Launch Invariant Path",
+        "Launches Invariant Path for code analysis",
+        "Analyzes claim transitions and invariant preservation",
+        "Use for code documentation and invariant checking"
+      }
+    })
+    
+    Enum.each(help_items, fn {num, {name, desc, details, usage}} ->
+      IO.puts("\n[#{num}] #{name}")
+      IO.puts("   Description: #{desc}")
+      IO.puts("   Details: #{details}")
+      IO.puts("   Usage: #{usage}")
+    end)
+    
+    IO.puts("\n" <> String.duplicate("-", 60))
+    IO.puts("Press Enter to return to main menu...")
+    IO.gets("")
   end
 end
