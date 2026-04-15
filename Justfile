@@ -1,72 +1,71 @@
-# SPDX-License-Identifier: PMPL-1.0-or-later
-# Justfile for git-scripts
-
-# Default recipe — list available commands
 import? "contractile.just"
 
+# Git-Scripts - Justfile
+# Build automation and development tasks
+
+# Default target
 default:
-    @just --list
+    just --list
 
-# Self-diagnostic — checks dependencies, permissions, paths
-doctor:
-    @echo "Running diagnostics for git-scripts..."
-    @echo "Checking required tools..."
-    @command -v just >/dev/null 2>&1 && echo "  [OK] just" || echo "  [FAIL] just not found"
-    @command -v git >/dev/null 2>&1 && echo "  [OK] git" || echo "  [FAIL] git not found"
-    @echo "Checking for hardcoded paths..."
-    @grep -rn '/var/mnt/eclipse' --include='*.rs' --include='*.ex' --include='*.res' --include='*.gleam' --include='*.sh' --include='*.toml' . 2>/dev/null | grep -v 'Justfile' | head -5 || echo "  [OK] No hardcoded paths in source"
-    @echo "Diagnostics complete."
+# Build the escript
+build:
+    mix escript.build
 
-# Guided tour of key features
-tour:
-    @echo "=== git-scripts Tour ==="
-    @echo ""
-    @echo "1. Project structure:"
-    @ls -la
-    @echo ""
-    @echo "2. Available commands: just --list"
-    @echo ""
-    @echo "3. Read README.adoc or README.md for full overview"
-    @echo "4. Read EXPLAINME.adoc for architecture decisions"
-    @echo "5. Run 'just doctor' to check your setup"
-    @echo ""
-    @echo "Tour complete! Try 'just --list' to see all available commands."
+# Run the TUI
+run:
+    ./script_manager --interactive
 
-# Open feedback channel with diagnostic context
-help-me:
-    @echo "=== git-scripts Help ==="
-    @echo "Platform: $(uname -s) $(uname -m)"
-    @echo "Shell: $SHELL"
-    @echo ""
-    @echo "To report an issue:"
-    @echo "  https://github.com/hyperpolymath/git-scripts/issues/new"
-    @echo ""
-    @echo "Include the output of 'just doctor' in your report."
+# Build and run
+build-run:
+    just build
+    just run
 
-# Run panic-attacker pre-commit scan
-assail:
-    @command -v panic-attack >/dev/null 2>&1 && panic-attack assail . || echo "WARN: panic-attack not found — install from https://github.com/hyperpolymath/panic-attacker"
+# Run specific tools
+wiki-audit:
+    ./script_manager --interactive <<< "1\n0\n"
 
-# LLM context dump
-llm-context:
-    @echo "Project: git-scripts"
-    @echo "License: PMPL-1.0-or-later"
-    @test -f README.adoc && head -30 README.adoc || test -f README.md && head -30 README.md || echo "No README found"
+branch-protection:
+    ./script_manager --interactive <<< "3\n0\n"
 
+# Cross-launch NQC
+nqc:
+    /var/mnt/eclipse/repos/nextgen-databases/nqc/nqc-enhanced-launcher.sh --auto
 
-# Print the current CRG grade (reads from READINESS.md '**Current Grade:** X' line)
-crg-grade:
-    @grade=$(grep -oP '(?<=\*\*Current Grade:\*\* )[A-FX]' READINESS.md 2>/dev/null | head -1); \
-    [ -z "$grade" ] && grade="X"; \
-    echo "$grade"
+# Cross-launch Invariant Path
+invariant-path:
+    /var/mnt/eclipse/repos/invariant-path/invariant-path-launcher --auto
 
-# Generate a shields.io badge markdown for the current CRG grade
-# Looks for '**Current Grade:** X' in READINESS.md; falls back to X
-crg-badge:
-    @grade=$(grep -oP '(?<=\*\*Current Grade:\*\* )[A-FX]' READINESS.md 2>/dev/null | head -1); \
-    [ -z "$grade" ] && grade="X"; \
-    case "$grade" in \
-      A) color="brightgreen" ;; B) color="green" ;; C) color="yellow" ;; \
-      D) color="orange" ;; E) color="red" ;; F) color="critical" ;; \
-      *) color="lightgrey" ;; esac; \
-    echo "[![CRG $grade](https://img.shields.io/badge/CRG-$grade-$color?style=flat-square)](https://github.com/hyperpolymath/standards/tree/main/component-readiness-grades)"
+# Install desktop integration
+install:
+    ./git-scripts-launcher --install
+
+# Uninstall desktop integration
+uninstall:
+    ./git-scripts-launcher --disinteg
+
+# Clean build artifacts
+clean:
+    rm -rf _build script_manager
+    rm -f /tmp/gitscripts-*.log /tmp/gitscripts-*.err
+
+# Run tests
+test:
+    mix test
+
+# Format code
+fmt:
+    mix format
+
+# Lint code
+lint:
+    mix credo
+
+# Show help
+help:
+    just --list
+
+# Combined workflows
+full-build:
+    just clean
+    just build
+    just run
