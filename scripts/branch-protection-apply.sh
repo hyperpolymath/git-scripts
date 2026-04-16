@@ -34,6 +34,15 @@ RULESET_NAME="Base"
 DRY_RUN=false
 LIMIT=600
 
+# ---------------------------------------------------------------------------
+# Ownership safety guard
+# ---------------------------------------------------------------------------
+
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/ownership_guard.sh
+source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
+assert_owner_allowed "${OWNER}"
+
 if [[ "${1:-}" == "--dry-run" ]]; then
     DRY_RUN=true
     echo "[DRY RUN] No changes will be made."

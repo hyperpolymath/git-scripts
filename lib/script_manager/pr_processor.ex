@@ -9,8 +9,12 @@ defmodule ScriptManager.PRProcessor do
   def process_all(org, action) when action in [:add_reviewers, :request_changes, :add_labels, :add_comments, :request_reviews, :close_stale] do
     IO.puts("\n🔄 MASS PR PROCESSOR")
     IO.puts("====================")
+
+    # Ownership guard: refuse to run against orgs/users outside the allowlist.
+    ScriptManager.OwnershipGuard.assert_owner_allowed!(org)
+
     IO.puts("Processing all open PRs with action: #{action}")
-    
+
     prs = ScriptManager.GitHubAPI.get_open_prs(org)
     
     if length(prs) == 0 do
@@ -78,7 +82,10 @@ defmodule ScriptManager.PRProcessor do
   def add_standard_comment(org, comment) do
     IO.puts("\n📝 ADD STANDARD COMMENT")
     IO.puts("======================")
-    
+
+    # Ownership guard: refuse to comment on PRs in orgs outside the allowlist.
+    ScriptManager.OwnershipGuard.assert_owner_allowed!(org)
+
     prs = ScriptManager.GitHubAPI.get_open_prs(org)
     
     Enum.each(prs, fn pr ->

@@ -8,6 +8,11 @@ else
     BASE_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
 fi
 
+# --- Ownership safety guard ---
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/ownership_guard.sh
+source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
+
 if [[ -z "${REPOS:-}" ]]; then
     echo "Warning: REPOS list is empty or not loaded."
     # Attempt to find all repos if list is empty
@@ -15,17 +20,31 @@ if [[ -z "${REPOS:-}" ]]; then
 fi
 
 FAILURES=()
+SKIPPED_OWNERSHIP=()
 
 for REPO in "${REPOS[@]}"; do
     REPO_PATH="$BASE_DIR/$REPO"
     echo "Processing $REPO..."
-    
+
     if [ ! -d "$REPO_PATH/.git" ]; then
         echo "Error: $REPO_PATH is not a git repository."
         FAILURES+=("$REPO (not a git repo)")
         continue
     fi
-    
+
+    # --- Per-repo ownership filter (refuse to push to foreign owners) ---
+    repo_owner="$(repo_owner_from_remote "$REPO_PATH" 2>/dev/null || true)"
+    if [ -z "${repo_owner}" ]; then
+        echo "Skipping $REPO: no GitHub origin remote (cannot verify owner)."
+        SKIPPED_OWNERSHIP+=("$REPO (no github origin)")
+        continue
+    fi
+    if ! owner_allowed "${repo_owner}"; then
+        echo "Skipping $REPO: owner '${repo_owner}' is not in the allowlist."
+        SKIPPED_OWNERSHIP+=("$REPO (owner=${repo_owner})")
+        continue
+    fi
+
     cd "$REPO_PATH" || continue
     
     # 0. Sync from remote first (Hiccup prevention)
@@ -96,3 +115,11 @@ echo "Persistent Failures:"
 for FAIL in "${FAILURES[@]}"; do
     echo "- $FAIL"
 done
+
+if [ "${#SKIPPED_OWNERSHIP[@]}" -gt 0 ]; then
+    echo ""
+    echo "Skipped (ownership guard):"
+    for SKIP in "${SKIPPED_OWNERSHIP[@]}"; do
+        echo "- $SKIP"
+    done
+fi

@@ -5,6 +5,7 @@ defmodule ScriptManager.GitSyncer do
   """
 
   alias ScriptManager.RepoHelper
+  alias ScriptManager.OwnershipGuard
 
   @type sync_status :: String.t()
   @type merge_status :: String.t()
@@ -16,9 +17,12 @@ defmodule ScriptManager.GitSyncer do
   def run do
     IO.puts("\n🌐 GLOBAL GIT SYNC (Concurrent Strict Mode)")
     IO.puts("============================================")
-    
-    all_repos = RepoHelper.find_all_repos()
-    
+
+    # Ownership guard: never push to repos outside the allowlist.
+    all_repos =
+      RepoHelper.find_all_repos()
+      |> OwnershipGuard.filter_allowed_verbose()
+
     header = "| Repository | Sync Status | Merge Status | Push Status |"
     separator = "| :--- | :--- | :--- | :--- |"
     

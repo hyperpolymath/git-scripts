@@ -7,6 +7,11 @@ REPOS_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
 LOG_FILE="$HOME/Desktop/readme_standardization.log"
 BACKUP_DIR="$HOME/Desktop/readme_backups"
 
+# --- Ownership safety guard ---
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/ownership_guard.sh
+source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
+
 if ! command -v pandoc >/dev/null 2>&1; then
     echo "Error: pandoc is not installed. Please install it to use this script."
     exit 1
@@ -36,8 +41,15 @@ find "$REPOS_DIR"/*/ -maxdepth 0 -type d | while read repo; do
     if [[ ! -d "$repo/.git" ]]; then
         continue
     fi
-    
+
     repo_name=$(basename "$repo")
+
+    # --- Ownership filter ---
+    if ! repo_allowed "$repo"; then
+        echo "Skipping: $repo_name (owner not in allowlist)" >> "$LOG_FILE"
+        continue
+    fi
+
     echo "Processing: $repo_name" >> "$LOG_FILE"
     
     # Check what README files exist

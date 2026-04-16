@@ -3,6 +3,11 @@
 # Simple Markdown to Asciidoc Converter
 # Handles basic markdown elements for README conversion
 
+# --- Ownership safety guard ---
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/ownership_guard.sh
+source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
+
 convert_markdown_to_adoc() {
     local md_file="$1"
     local adoc_file="$2"
@@ -33,10 +38,18 @@ REPOS_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
 find "$REPOS_DIR" -maxdepth 2 -name "README.md" -type f | while read md_file; do
     repo_dir=$(dirname "$md_file")
     adoc_file="$repo_dir/README.adoc"
-    
+
+    # --- Ownership filter (only convert files in repos we own) ---
+    if [[ -d "$repo_dir/.git" ]]; then
+        if ! repo_allowed "$repo_dir"; then
+            echo "Skipping: $md_file (owner not in allowlist)"
+            continue
+        fi
+    fi
+
     echo "Converting: $md_file"
     convert_markdown_to_adoc "$md_file" "$adoc_file"
-    
+
     # Remove the original markdown file
     rm "$md_file"
     echo "  → Created: $adoc_file"
