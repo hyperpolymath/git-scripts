@@ -2,6 +2,7 @@ defmodule ScriptManager.EstateDeployer do
   @moduledoc "Estate deployment logic generalized for all repositories"
 
   alias ScriptManager.RepoHelper
+  alias ScriptManager.OwnershipGuard
 
   @contractile_types ["must", "trust", "dust", "lust", "adjust", "intend"]
   @standards_dir "/var/mnt/eclipse/repos/standards"
@@ -65,9 +66,12 @@ defmodule ScriptManager.EstateDeployer do
   end
 
   defp deploy_by_paths(repo_paths, phases) do
+    # Ownership guard: refuse to deploy into repos outside the allowlist.
+    repo_paths = OwnershipGuard.filter_allowed_verbose(repo_paths)
+
     total = length(repo_paths)
     IO.puts("Processing #{total} repositories...")
-    
+
     repo_paths
     |> Enum.with_index(1)
     |> Enum.each(fn {path, index} ->

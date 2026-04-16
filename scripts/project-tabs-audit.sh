@@ -24,6 +24,15 @@ set -euo pipefail
 
 OWNER="hyperpolymath"
 
+# ---------------------------------------------------------------------------
+# Ownership safety guard
+# ---------------------------------------------------------------------------
+
+_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/ownership_guard.sh
+source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
+assert_owner_allowed "${OWNER}"
+
 # Mandatory topics — every repo SHOULD have these
 MANDATORY_TOPICS=("hyperpolymath" "palimpsest")
 

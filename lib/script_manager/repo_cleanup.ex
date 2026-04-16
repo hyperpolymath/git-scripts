@@ -6,6 +6,13 @@ defmodule ScriptManager.RepoCleanup do
     IO.puts("🧹 REPOSITORY CLEANUP")
     IO.puts("====================")
     IO.puts("")
+    IO.puts(
+      "⚠️  These cleanup operations shell out to external scripts in" <>
+        " /var/mnt/eclipse/cleanup_scripts/ which iterate every local repo and" <>
+        " are NOT bound by config/owners.config. Review those scripts before" <>
+        " running them."
+    )
+    IO.puts("")
     IO.puts("Select cleanup operation:")
     IO.puts("[1] Run comprehensive cleanup (all 280+ repos)")
     IO.puts("[2] Run targeted cleanup (10 key repos)")
