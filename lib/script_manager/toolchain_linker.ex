@@ -10,7 +10,7 @@ defmodule ScriptManager.ToolchainLinker do
     },
     %{
       name: "ephapax",
-      source: "/var/mnt/eclipse/repos/ephapax/target/debug/ephapax"
+      source: "/var/mnt/eclipse/repos/developer-ecosystem/nextgen-languages/ephapax/target/debug/ephapax"
     }
   ]
 
