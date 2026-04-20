@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: PMPL-1.0-or-later
+= git-scripts -- EXPLAINME
+
+== "A modern, Elixir-based TUI for managing reusable scripts and functions across repositories"
+
+[quote, README.md]
+____
+A modern, Elixir-based TUI for managing reusable scripts and functions across
+repositories.
+____
+
+An OTP application that bundles wiki auditing, branch protection, README
+standardisation, and other repo-management tasks behind an interactive menu.
+Built as an escript so it runs without a pre-installed Elixir runtime.
+
+**Caveat:** Several modules are stubs or partial implementations (the README
+itself lists "Add real file system operations" and "Implement GitHub API
+integration" as future work).
+
+[cols="1,2", options="header"]
+|===
+| Path | Proves
+
+| `lib/script_manager/tui.ex`
+| Interactive TUI menu system
+
+| `lib/script_manager/wiki_audit.ex`
+| Wiki auditing module
+
+| `lib/script_manager/branch_protection.ex`
+| Branch protection rule application
+
+| `lib/script_manager/md_converter.ex`
+| Markdown-to-AsciiDoc conversion
+
+| `lib/script_manager/readme_standardizer.ex`
+| README standardisation across repos
+
+| `lib/script_manager/application.ex`
+| OTP application + supervisor tree (fault tolerance claim)
+|===
