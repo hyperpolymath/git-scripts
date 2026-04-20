@@ -1,41 +1,41 @@
-// SPDX-License-Identifier: PMPL-1.0-or-later
-= git-scripts -- EXPLAINME
+// SPDX-L-I: PMPL-.--
+= - -- XPLINM
 
-== "A modern, Elixir-based TUI for managing reusable scripts and functions across repositories"
+== " , - TUI        "
 
-[quote, README.md]
+[, RDM.]
 ____
-A modern, Elixir-based TUI for managing reusable scripts and functions across
-repositories.
+ , - TUI       
+.
 ____
 
-An OTP application that bundles wiki auditing, branch protection, README
-standardisation, and other repo-management tasks behind an interactive menu.
-Built as an escript so it runs without a pre-installed Elixir runtime.
+ OTP     ,  , RDM
+,   -     .
+         -  .
 
-**Caveat:** Several modules are stubs or partial implementations (the README
-itself lists "Add real file system operations" and "Implement GitHub API
-integration" as future work).
+**C:** S       ( RDM
+  "   y "  "I GH PI
+"   ).
 
-[cols="1,2", options="header"]
+[=",", =""]
 |===
-| Path | Proves
+| P | P
 
-| `lib/script_manager/tui.ex`
-| Interactive TUI menu system
+| `/_/.`
+| I TUI  y
 
-| `lib/script_manager/wiki_audit.ex`
-| Wiki auditing module
+| `/_/_.`
+| W  
 
-| `lib/script_manager/branch_protection.ex`
-| Branch protection rule application
+| `/_/_.`
+|    
 
-| `lib/script_manager/md_converter.ex`
-| Markdown-to-AsciiDoc conversion
+| `/_/_.`
+| M--D 
 
-| `lib/script_manager/readme_standardizer.ex`
-| README standardisation across repos
+| `/_/_z.`
+| RDM   
 
-| `lib/script_manager/application.ex`
-| OTP application + supervisor tree (fault tolerance claim)
+| `/_/.`
+| OTP  +   (  )
 |===
