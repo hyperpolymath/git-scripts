@@ -394,6 +394,115 @@ gs::have() {
 }
 
 # -----------------------------------------------------------------------------
+# Ownership guard. Refuse to operate on repos owned by anyone outside the
+# allowlist. Folded in from the legacy scripts/lib/ownership_guard.sh
+# (which now sources this lib for backwards compat).
+#
+# Configuration (first match wins):
+#   $GIT_SCRIPTS_ALLOWED_OWNERS   space-separated list, env-var override
+#   ${GS_OWNERS_CONFIG} or scripts/../config/owners.config (sources ALLOWED_OWNERS=())
+#   /var/mnt/eclipse/repos/git-scripts/config/owners.config (legacy fallback)
+#   hard-coded ["hyperpolymath"]                            (final fallback)
+# -----------------------------------------------------------------------------
+
+if [[ -z "${GS_OWNERSHIP_GUARD_LOADED:-}" ]]; then
+    GS_OWNERSHIP_GUARD_LOADED=1
+
+    # Load allowlist.
+    if [[ -n "${GIT_SCRIPTS_ALLOWED_OWNERS:-}" ]]; then
+        # shellcheck disable=SC2206
+        ALLOWED_OWNERS=(${GIT_SCRIPTS_ALLOWED_OWNERS})
+        GS_OWNERS_SOURCE="env:GIT_SCRIPTS_ALLOWED_OWNERS"
+    else
+        __gs_owners_candidates=(
+            "${GS_OWNERS_CONFIG:-}"
+            "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")/../../config/owners.config"
+            "/var/mnt/eclipse/repos/git-scripts/config/owners.config"
+        )
+        GS_OWNERS_SOURCE=""
+        for __gs_c in "${__gs_owners_candidates[@]}"; do
+            [[ -z "${__gs_c}" || ! -f "${__gs_c}" ]] && continue
+            # shellcheck disable=SC1090
+            source "${__gs_c}"
+            GS_OWNERS_SOURCE="${__gs_c}"
+            break
+        done
+        [[ -z "${GS_OWNERS_SOURCE}" ]] && ALLOWED_OWNERS=("hyperpolymath")
+    fi
+fi
+
+__gs_lc() { printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'; }
+
+# Return 0 if $1 is in ALLOWED_OWNERS (case-insensitive).
+gs::owner_allowed() {
+    local needle; needle="$(__gs_lc "${1:-}")"
+    [[ -z "${needle}" ]] && return 1
+    local allowed
+    for allowed in "${ALLOWED_OWNERS[@]}"; do
+        [[ "${needle}" = "$(__gs_lc "${allowed}")" ]] && return 0
+    done
+    return 1
+}
+
+# Print the owner segment of a local repo's `origin` URL.
+# Host-agnostic: GitHub, GitLab, Bitbucket, Gitea, codeberg, SSH, HTTPS.
+gs::repo_owner_from_remote() {
+    local repo_path="${1:-.}"
+    local url
+    url="$(git -C "${repo_path}" config --get remote.origin.url 2>/dev/null)" || return 1
+    [[ -z "${url}" ]] && return 1
+    url="${url%.git}"
+
+    local path_part=""
+    if [[ "${url}" =~ ^[^[:space:]/@]+@[^:]+:(.+)$ ]]; then
+        path_part="${BASH_REMATCH[1]}"
+    elif [[ "${url}" =~ ^[a-zA-Z]+://[^/]+(/.+)$ ]]; then
+        path_part="${BASH_REMATCH[1]}"
+    else
+        return 1
+    fi
+    path_part="${path_part#/}"; path_part="${path_part%/}"
+    [[ -z "${path_part}" ]] && return 1
+
+    local owner_dir owner
+    owner_dir="$(dirname "${path_part}")"
+    [[ "${owner_dir}" = "." || "${owner_dir}" = "/" ]] && return 1
+    owner="$(basename "${owner_dir}")"
+    [[ -z "${owner}" ]] && return 1
+    printf '%s\n' "${owner}"
+}
+
+# Soft check: 0 if local repo's owner is allowed.
+gs::repo_allowed() {
+    local owner
+    owner="$(gs::repo_owner_from_remote "${1:-.}")" || return 1
+    gs::owner_allowed "${owner}"
+}
+
+# Hard guard: print explanation and exit 78 (EX_CONFIG) if owner not allowed.
+gs::assert_owner_allowed() {
+    local owner="${1:-}"
+    if gs::owner_allowed "${owner}"; then
+        return 0
+    fi
+    {
+        printf '\n%s%s%s REFUSING to operate on owner %s%s%s\n' \
+            "${GS_C_RED}" "❌" "${GS_C_RST}" \
+            "${GS_C_BOLD}" "'${owner}'" "${GS_C_RST}"
+        printf '   This owner is not in the allowlist for git-scripts.\n'
+        printf '   Allowed owners: %s\n' "${ALLOWED_OWNERS[*]}"
+        printf '   Configure via:\n'
+        if [[ -n "${GS_OWNERS_SOURCE}" ]]; then
+            printf '     %s\n' "${GS_OWNERS_SOURCE}"
+        else
+            printf '     scripts/../config/owners.config\n'
+        fi
+        printf '   …or set GIT_SCRIPTS_ALLOWED_OWNERS="owner1 owner2" in env.\n\n'
+    } >&2
+    exit 78
+}
+
+# -----------------------------------------------------------------------------
 # Tiny flag parser. Consumes the standard flags and leaves the rest in
 # $GS_ARGS (an array). Recognised:
 #   -n|--dry-run   → GS_DRY_RUN=1
