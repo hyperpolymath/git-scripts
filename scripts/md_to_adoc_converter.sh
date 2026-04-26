@@ -1,58 +1,13 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# SPDX-License-Identifier: PMPL-1.0-or-later
+#
+# DEPRECATED — replaced by standardize_readmes.sh (which uses pandoc properly).
+#
+# The original sed-based converter had several broken regexes (\\* escaping,
+# group references). standardize_readmes.sh handles MD->AsciiDoc with pandoc
+# and the correct boilerplate. Stub kept so the Elixir TUI's hardcoded
+# reference (lib/script_manager/md_converter.ex) still resolves.
 
-# Simple Markdown to Asciidoc Converter
-# Handles basic markdown elements for README conversion
-
-# --- Ownership safety guard ---
-_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/ownership_guard.sh
-source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
-
-convert_markdown_to_adoc() {
-    local md_file="$1"
-    local adoc_file="$2"
-    
-    # Read the markdown file
-    local content=$(cat "$md_file")
-    
-    # Basic conversions
-    content=$(echo "$content" | sed 's/^# /== /g')  # Headers
-    content=$(echo "$content" | sed 's/^## /=== /g')
-    content=$(echo "$content" | sed 's/^### /==== /g')
-    content=$(echo "$content" | sed 's/\*\*([^*]*)\*\*/\\*\1\\*/g')  # Bold
-    content=$(echo "$content" | sed 's/\*([^*]*)\*/_\1_/g')  # Italic
-    content=$(echo "$content" | sed 's/`([^`]*)`/\`\1\`/g')  # Code
-    content=$(echo "$content" | sed 's/!\[([^\]]*)\]([^(]*)/image:\2[\1]/g')  # Images
-    content=$(echo "$content" | sed 's/\[([^\]]*)\]([^(]*)/link:\2[\1]/g')  # Links
-    
-    # Write to adoc file
-    echo "= $(basename $(dirname "$md_file"))" > "$adoc_file"
-    echo ":toc: preamble" >> "$adoc_file"
-    echo ":icons: font" >> "$adoc_file"
-    echo "" >> "$adoc_file"
-    echo "$content" >> "$adoc_file"
-}
-
-# Find all remaining README.md files and convert them
-REPOS_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
-find "$REPOS_DIR" -maxdepth 2 -name "README.md" -type f | while read md_file; do
-    repo_dir=$(dirname "$md_file")
-    adoc_file="$repo_dir/README.adoc"
-
-    # --- Ownership filter (only convert files in repos we own) ---
-    if [[ -d "$repo_dir/.git" ]]; then
-        if ! repo_allowed "$repo_dir"; then
-            echo "Skipping: $md_file (owner not in allowlist)"
-            continue
-        fi
-    fi
-
-    echo "Converting: $md_file"
-    convert_markdown_to_adoc "$md_file" "$adoc_file"
-
-    # Remove the original markdown file
-    rm "$md_file"
-    echo "  → Created: $adoc_file"
-done
-
-echo "Conversion complete!"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+echo "[deprecated] md_to_adoc_converter.sh -> standardize_readmes.sh" >&2
+exec "${SCRIPT_DIR}/standardize_readmes.sh" "$@"

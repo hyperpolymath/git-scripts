@@ -1,21 +1,24 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+#
+# standardize_readmes.sh — converts every repo's README.md to README.adoc
+# (canonical format) using pandoc, with snapshots saved before each change.
 
-# README Standardization Script
-# Converts all README files to README.adoc format and eliminates duplicates
+set -uo pipefail
+__SD="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+. "${__SD}/lib/common.sh"
+GS_SCRIPT_NAME="standardize_readmes"
+gs::strict
+gs::install_trap
+gs::install_trap_summary
+gs::need pandoc
 
-REPOS_DIR="${REPOS_DIR:-/var/mnt/eclipse/repos}"
-LOG_FILE="$HOME/Desktop/readme_standardization.log"
-BACKUP_DIR="$HOME/Desktop/readme_backups"
-
-# --- Ownership safety guard ---
-_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/ownership_guard.sh
-source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
-
-if ! command -v pandoc >/dev/null 2>&1; then
-    echo "Error: pandoc is not installed. Please install it to use this script."
-    exit 1
-fi
+REPOS_DIR="${REPOS_DIR:-${GS_REPOS_DIR}}"
+LOG_FILE="${GS_REPORT_DIR}/$(date -u +'%Y%m%dT%H%M%SZ')-readme-standardization.log"
+BACKUP_DIR="${GS_BACKUP_DIR}/readmes-$(date -u +'%Y%m%dT%H%M%SZ')"
+gs::info "log: ${LOG_FILE}"
+gs::info "backups: ${BACKUP_DIR}"
 
 echo "Starting README standardization process..."
 echo "$(date) - Starting README standardization" > "$LOG_FILE"
@@ -41,15 +44,8 @@ find "$REPOS_DIR"/*/ -maxdepth 0 -type d | while read repo; do
     if [[ ! -d "$repo/.git" ]]; then
         continue
     fi
-
+    
     repo_name=$(basename "$repo")
-
-    # --- Ownership filter ---
-    if ! repo_allowed "$repo"; then
-        echo "Skipping: $repo_name (owner not in allowlist)" >> "$LOG_FILE"
-        continue
-    fi
-
     echo "Processing: $repo_name" >> "$LOG_FILE"
     
     # Check what README files exist

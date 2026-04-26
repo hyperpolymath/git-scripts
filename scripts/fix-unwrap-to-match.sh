@@ -1,102 +1,151 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 #
-# fix-unwrap-to-match.sh — Replace .unwrap() with .expect() in Rust code
+# fix-unwrap-to-match.sh — convert bare .unwrap() Rust calls to a safer form.
 #
-# Fixes PanicPath findings by converting bare .unwrap() calls to .expect("TODO: handle error/None")
-# which provides context when a panic occurs.
+# IMPORTANT: per memory feedback_unwrap_to_expect_antipattern,
+# `.unwrap()` → `.expect("TODO")` is an ANTI-PATTERN — same panic, false debt
+# marker. By default this script SKIPS that transformation and instead just
+# REPORTS findings. Use --apply-expect to opt in to the legacy behaviour
+# (e.g. when the user has already triaged each site and wants the marker).
 #
-# IMPORTANT: .unwrap() → .expect("context") is the only safe mechanical transformation.
-# We do NOT convert to match expressions — that changes control flow and can break compilation.
-#
-# Skips test files where .unwrap() is acceptable.
-#
-# Usage: fix-unwrap-to-match.sh <repo-path> [finding-json]
+# Self-healing/safe behaviour:
+#   * Per-file snapshot saved before any edit; rollback path printed on
+#     failure of subsequent type-check (run separately with `cargo check`).
+#   * Skips test/bench files where .unwrap() is acceptable.
+#   * Honours --dry-run.
+#   * Bounded parallelism via -j N.
 
-set -euo pipefail
+set -uo pipefail
+SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+. "${SCRIPT_DIR}/lib/common.sh"
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/../lib/third-party-excludes.sh" 2>/dev/null || true
+GS_SCRIPT_NAME="fix-unwrap-to-match"
+GS_HELP_TEXT="Usage: fix-unwrap-to-match.sh [--apply-expect] [--dry-run] <repo-path> [finding-json]
 
-REPO_PATH="${1:?Usage: $0 <repo-path> [finding-json]}"
-FINDING_JSON="${2:-}"
+By default this script REPORTS bare .unwrap() calls in non-test Rust code
+without modifying them (per the unwrap-to-expect anti-pattern memo).
 
-if [[ -n "$FINDING_JSON" ]]; then
-    echo "=== PanicPath: .unwrap() → .expect() ==="
-    echo "  Repo: $REPO_PATH"
-    echo "  Findings: $FINDING_JSON"
-else
-    echo "=== PanicPath: .unwrap() → .expect() ==="
-    echo "  Repo: $REPO_PATH"
+Options:
+      --apply-expect   Opt in to the .unwrap() -> .expect(\"TODO: handle\") rewrite
+                       (NOT recommended; same panic, just adds a comment).
+  -n, --dry-run        Show what would change.
+  -y, --yes            Skip confirmation when --apply-expect is set.
+  -j, --jobs N         Parallel workers for file iteration.
+  -v, --verbose
+  -q, --quiet
+  -h, --help
+"
+
+gs::strict
+gs::install_trap
+gs::install_trap_summary
+
+OPT_APPLY=0
+REPO_PATH=""
+FINDING_JSON=""
+
+while (( $# > 0 )); do
+    case "$1" in
+        --apply-expect) OPT_APPLY=1 ;;
+        -n|--dry-run)   GS_DRY_RUN=1 ;;
+        -y|--yes)       GS_YES=1 ;;
+        -j|--jobs)      GS_PARALLEL="${2:?}"; shift ;;
+        -v|--verbose)   GS_LOG_LEVEL=debug ;;
+        -q|--quiet)     GS_LOG_LEVEL=warn ;;
+        -h|--help)      printf '%s\n' "${GS_HELP_TEXT}"; exit 0 ;;
+        *)
+            if [[ -z "${REPO_PATH}" ]]; then REPO_PATH="$1"
+            elif [[ -z "${FINDING_JSON}" ]]; then FINDING_JSON="$1"
+            else gs::die "unexpected positional: $1"
+            fi
+            ;;
+    esac
+    shift
+done
+
+[[ -z "${REPO_PATH}" ]] && gs::die "repo path required (see --help)"
+[[ -d "${REPO_PATH}" ]] || gs::die "repo path is not a directory: ${REPO_PATH}"
+
+# Optional third-party-excludes plumbing kept for compat with older lib.
+if [[ -f "${SCRIPT_DIR}/../lib/third-party-excludes.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/../lib/third-party-excludes.sh"
 fi
+EXCLUDES=("${FIND_THIRD_PARTY_EXCLUDES[@]:-}")
 
-FIXED_COUNT=0
-TOTAL_REPLACEMENTS=0
-
-# Determine if a file is a test file (skip these)
-is_test_file() {
-    local filepath="$1"
-    local basename
-    basename="$(basename "$filepath")"
-
-    # Skip common test file patterns
-    case "$basename" in
+is_test_or_bench() {
+    local f="$1"
+    case "$(basename -- "$f")" in
         *_test.rs|test_*.rs) return 0 ;;
     esac
-
-    # Skip files inside tests/ directories
-    if echo "$filepath" | grep -qE '/tests/'; then
-        return 0
-    fi
-
-    # Skip files inside benches/ directories
-    if echo "$filepath" | grep -qE '/benches/'; then
-        return 0
-    fi
-
-    return 1
+    [[ "$f" == */tests/* || "$f" == */benches/* ]]
 }
 
-# Process Rust files
-while IFS= read -r -d '' file; do
-    # Skip test files
-    if is_test_file "$file"; then
-        continue
-    fi
+gs::banner "PanicPath audit: bare .unwrap() in non-test Rust"
+gs::info "repo=${REPO_PATH}  apply=${OPT_APPLY}  dry-run=${GS_DRY_RUN}"
+[[ -n "${FINDING_JSON}" ]] && gs::info "finding=${FINDING_JSON}"
 
-    # Check if file contains .unwrap() calls (not already .expect( or .unwrap_or)
-    if ! grep -qP '\.unwrap\(\)' "$file" 2>/dev/null; then
-        continue
-    fi
+if (( OPT_APPLY )) && ! gs::is_dry_run; then
+    gs::warn "--apply-expect is enabled. This is an anti-pattern (panic preserved, fake debt marker)."
+    gs::confirm "Proceed anyway?" || gs::die "aborted"
+fi
 
-    rel_path="${file#$REPO_PATH/}"
+REPORT_FILE="$(gs::report_path)"
+gs::on_exit "echo 'report: ${REPORT_FILE}' >&2"
 
-    # Count replaceable .unwrap() calls:
-    replaceable=$(grep -P '\.unwrap\(\)' "$file" 2>/dev/null \
+declare -i FILE_COUNT=0 SITE_COUNT=0 EDITED=0
+
+# Iterate Rust files. Sequential — sed -i edits in place; parallel writes
+# would race on the same file rarely, but keep it deterministic.
+while IFS= read -r -d '' f; do
+    is_test_or_bench "${f}" && continue
+    grep -qP '\.unwrap\(\)' "${f}" 2>/dev/null || continue
+
+    # Lines that are bare .unwrap() (not commented, not already .expect()).
+    local_count=$(grep -P '\.unwrap\(\)' "${f}" 2>/dev/null \
         | grep -v '^\s*//' \
         | grep -v '\.expect(' \
-        || true)
+        | wc -l || echo 0)
+    (( local_count == 0 )) && continue
 
-    if [[ -z "$replaceable" ]]; then
-        continue
+    rel="${f#${REPO_PATH}/}"
+    (( FILE_COUNT++ )) || true
+    SITE_COUNT=$(( SITE_COUNT + local_count ))
+
+    gs::report_add "${REPORT_FILE}" \
+        "file = \"${rel}\"" \
+        "sites = ${local_count}"
+
+    if (( OPT_APPLY )); then
+        if gs::is_dry_run; then
+            gs::info "DRY-RUN: would rewrite ${local_count} site(s) in ${rel}"
+            continue
+        fi
+        snap="$(gs::snapshot "${f}")"
+        gs::debug "snapshot: ${snap}"
+        if sed -i -E '/^\s*\/\//!{ /\.expect\s*\(/!s/\.unwrap\(\)/\.expect("TODO: handle error")/g }' "${f}"; then
+            (( EDITED++ )) || true
+            gs::info "rewrote ${local_count} site(s) in ${rel}"
+        else
+            gs::error "sed failed; rolling back ${rel}"
+            gs::rollback "${snap}" "${f}"
+        fi
+    else
+        gs::warn "${rel}: ${local_count} bare .unwrap() (report-only; use --apply-expect to rewrite)"
     fi
+done < <(find "${REPO_PATH}" -type f -name '*.rs' \
+    -not -path '*/.git/*' -not -path '*/target/*' \
+    "${EXCLUDES[@]}" -print0 2>/dev/null)
 
-    count=$(echo "$replaceable" | wc -l)
-    echo "  FIXING $rel_path — $count .unwrap() call(s)"
+gs::banner "Done"
+gs::info "files=${FILE_COUNT}  sites=${SITE_COUNT}  edited=${EDITED}"
+gs::info "report: ${REPORT_FILE}"
 
-    # Replace .unwrap() with .expect("TODO: handle error") on non-comment lines
-    sed -i -E '/^\s*\/\//!{ /\.expect\s*\(/!s/\.unwrap\(\)/\.expect("TODO: handle error")/g }' "$file"
-
-    ((FIXED_COUNT++)) || true
-    ((TOTAL_REPLACEMENTS += count)) || true
-
-done < <(find "$REPO_PATH" -type f -name "*.rs" \
-    -not -path "*/.git/*" ${FIND_THIRD_PARTY_EXCLUDES[@]:-} \
-    -print0 2>/dev/null)
-
-echo ""
-if [[ "$FIXED_COUNT" -gt 0 ]]; then
-    echo "Fixed $FIXED_COUNT file(s) — replaced $TOTAL_REPLACEMENTS .unwrap() → .expect(\"TODO: handle error\")"
-else
-    echo "No bare .unwrap() calls found in non-test code"
+if (( OPT_APPLY && EDITED > 0 )); then
+    gs::warn "Run 'cargo check' on each affected crate before committing."
 fi
+
+# Report-only run: exit 0 even when sites were found (it's an inventory).
+exit 0

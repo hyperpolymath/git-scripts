@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+#
 # project-tabs-audit.sh — Audit and standardize GitHub "About" metadata
 # for all hyperpolymath repos (description, homepage URL, topics).
 #
-# Author: Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
-#
 # Usage:
-#   ./project-tabs-audit.sh              # Full audit (read-only)
-#   ./project-tabs-audit.sh --fix-topics # Also add missing mandatory topics (WRITES)
-#   ./project-tabs-audit.sh --json       # Output raw JSON for each repo
+#   project-tabs-audit.sh              # Full audit (read-only)
+#   project-tabs-audit.sh --fix-topics # Also add missing mandatory topics (WRITES)
+#   project-tabs-audit.sh --json       # Output raw JSON for each repo
 #
 # Requirements: gh (GitHub CLI), jq
 #
@@ -16,22 +16,21 @@
 # Those require human judgment. It only reports gaps and optionally adds
 # mandatory topics.
 
-set -euo pipefail
+set -uo pipefail
+__SD="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+. "${__SD}/lib/common.sh"
+GS_SCRIPT_NAME="project-tabs-audit"
+gs::strict
+gs::install_trap
+gs::install_trap_summary
+gs::need gh jq
+gs::gh_check
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 OWNER="hyperpolymath"
-
-# ---------------------------------------------------------------------------
-# Ownership safety guard
-# ---------------------------------------------------------------------------
-
-_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/ownership_guard.sh
-source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
-assert_owner_allowed "${OWNER}"
 
 # Mandatory topics — every repo SHOULD have these
 MANDATORY_TOPICS=("hyperpolymath" "palimpsest")

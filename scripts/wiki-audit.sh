@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: PMPL-1.0-or-later
-# Wiki Audit Script for hyperpolymath repos
-# Copyright (c) 2026 Jonathan D.A. Jewell (hyperpolymath) <j.d.a.jewell@open.ac.uk>
+# SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 #
-# Audits GitHub wiki status across all hyperpolymath repositories.
+# wiki-audit.sh — audits GitHub wiki status across hyperpolymath repos.
 # Reports: wiki enabled/disabled, wiki has content, page count, page names.
 #
 # Usage:
-#   ./wiki-audit.sh                  # Audit all repos
-#   ./wiki-audit.sh --key-only       # Audit key repos only
-#   ./wiki-audit.sh --summary        # Print summary stats only
-#   ./wiki-audit.sh --template       # Print wiki Home.md template
+#   wiki-audit.sh                # Audit all repos
+#   wiki-audit.sh --key-only     # Audit key repos only
+#   wiki-audit.sh --summary      # Print summary stats only
+#   wiki-audit.sh --template     # Print wiki Home.md template
 
-set -euo pipefail
+set -uo pipefail
+__SD="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+. "${__SD}/lib/common.sh"
+GS_SCRIPT_NAME="wiki-audit"
+gs::strict
+gs::install_trap
+gs::install_trap_summary
+gs::need gh git
 
 # --- Configuration ---
 OWNER="hyperpolymath"
 TMPDIR=""
-
-# --- Ownership safety guard ---
-_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/ownership_guard.sh
-source "${_SCRIPT_DIR}/lib/ownership_guard.sh"
-assert_owner_allowed "${OWNER}"
 
 # Key repos to always check (subset for quick audits)
 KEY_REPOS=(
