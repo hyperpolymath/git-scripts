@@ -31,7 +31,7 @@ enum ViewMode {
 
 struct Model {
   view_mode: ViewMode,
-  scripts: List(GitScript),
+  scripts: [GitScript],
   selected_script_index: Int,
   is_refreshing: Bool,
   history_depth: Int
@@ -51,7 +51,7 @@ enum Msg {
 // ── TEA Logic ────────────────────────────────────────────────────────────────
 
 fn git_scripts_init() -> Model {
-  {
+  #{
     view_mode: ViewMode::ScriptList,
     scripts: [],
     selected_script_index: -1,
@@ -65,7 +65,7 @@ fn git_scripts_update(@linear msg: Msg, @linear model: Model) -> Model {
     { view_mode: v, scripts: s, selected_script_index: i, is_refreshing: r, history_depth: h } => {
       match msg {
         Navigate(new_mode) => {
-          {
+          #{
             view_mode: new_mode,
             scripts: s,
             selected_script_index: i,
@@ -75,7 +75,7 @@ fn git_scripts_update(@linear msg: Msg, @linear model: Model) -> Model {
         }
 
         SelectScript(new_idx) => {
-          {
+          #{
             view_mode: v,
             scripts: s,
             selected_script_index: new_idx,
@@ -86,7 +86,7 @@ fn git_scripts_update(@linear msg: Msg, @linear model: Model) -> Model {
 
         RunSelectedScript => {
           // Linear update: mark script as running
-          {
+          #{
             view_mode: v,
             scripts: s, // In a full impl, we'd update the specific script status in the list
             selected_script_index: i,
@@ -96,7 +96,7 @@ fn git_scripts_update(@linear msg: Msg, @linear model: Model) -> Model {
         }
 
         ScriptFinished(idx, status) => {
-          {
+          #{
             view_mode: v,
             scripts: s,
             selected_script_index: i,
@@ -106,7 +106,7 @@ fn git_scripts_update(@linear msg: Msg, @linear model: Model) -> Model {
         }
 
         RefreshScripts => {
-          {
+          #{
             view_mode: v,
             scripts: s,
             selected_script_index: i,
@@ -117,7 +117,7 @@ fn git_scripts_update(@linear msg: Msg, @linear model: Model) -> Model {
 
         PopState => {
           if h > 0 {
-            {
+            #{
               view_mode: ViewMode::ScriptList,
               scripts: s,
               selected_script_index: -1,
@@ -125,7 +125,7 @@ fn git_scripts_update(@linear msg: Msg, @linear model: Model) -> Model {
               history_depth: h - 1
             }
           } else {
-            {
+            #{
               view_mode: v,
               scripts: s,
               selected_script_index: i,
