@@ -108,7 +108,7 @@ defmodule ScriptManager.EstateDeployer do
         File.mkdir_p!(dir)
         content = """
         // #{type}file.a2ml for #{repo_name}
-        // SPDX-License-Identifier: PMPL-1.0-or-later
+        // SPDX-License-Identifier: MPL-2.0
         // Generated: #{DateTime.utc_now() |> DateTime.to_iso8601()}
 
         #{type}file {

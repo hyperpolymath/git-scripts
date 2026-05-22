@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 # SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 #
 # wiki-audit.sh — audits GitHub wiki status across hyperpolymath repos.
@@ -73,7 +73,7 @@ print_template() {
 
 {{REPO_NAME}} is part of the [Hyperpolymath](https://github.com/hyperpolymath) ecosystem.
 
-**License:** PMPL-1.0-or-later
+**License:** MPL-2.0
 **Status:** See [ROADMAP](../blob/main/ROADMAP.adoc) and [STATE.scm](../blob/main/.machine_readable/STATE.scm)
 
 ## Key Concepts

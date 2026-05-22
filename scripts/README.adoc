@@ -118,7 +118,7 @@ keep working — they just print a notice and exec the replacement.
 [source,bash]
 ----
 #!/usr/bin/env bash
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"   # or ../lib/common.sh from a subgroup

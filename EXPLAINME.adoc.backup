@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: PMPL-1.0-or-later
+// SPDX-License-Identifier: MPL-2.0
 = git-scripts -- EXPLAINME
 
 == "A modern, Elixir-based TUI for managing reusable scripts and functions across repositories"

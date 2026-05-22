@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: PMPL-1.0-or-later
+# SPDX-License-Identifier: MPL-2.0
 # Git Scripts Launcher - Easy access to the Elixir TUI with cleanup integration
 
 set -euo pipefail
