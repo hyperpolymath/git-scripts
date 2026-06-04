@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Git Scripts Launcher
 
 This directory contains a standardized launcher for the Git Scripts application following the UX Standards from the hyperpolymath ecosystem.

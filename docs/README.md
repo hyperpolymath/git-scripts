@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Elixir Script Manager
 
 A modern, Elixir-based TUI for managing reusable scripts and functions across repositories.

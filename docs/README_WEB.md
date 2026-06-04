@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Script Manager Web Interface (Gossamer)
 
 A modern web-based interface for the Script Manager, replacing the TUI with a sophisticated Gossamer-powered UI.

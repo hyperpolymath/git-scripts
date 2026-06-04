@@ -1,3 +1,7 @@
+<!--
+SPDX-License-Identifier: MPL-2.0
+Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
+-->
 # Git Scripts UI (ReScript + TEA)
 
 This is a ReScript-TEA UI for `git-scripts` with:

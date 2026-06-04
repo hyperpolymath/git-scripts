@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+# Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 defmodule ScriptManager.MassDeployer do
   @moduledoc "Mass deploy contractiles, K9-SVC, accessibility docs, and VPAT across the entire Hyperpolymath estate (non-interactive)."
 
