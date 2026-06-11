@@ -69,3 +69,5 @@ full-build:
     just clean
     just build
     just run
+secret-scan-trufflehog:
+    @command -v trufflehog >/dev/null && trufflehog filesystem . --only-verified || true
