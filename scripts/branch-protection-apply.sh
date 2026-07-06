@@ -85,16 +85,25 @@ fi
 # -----------------------------------------------------------------------------
 
 build_payload() {
-    cat <<'JSON'
+    # $1 = the repo's EXISTING required_status_checks array (JSON). Preserved so
+    # this standardiser repairs the invariant baseline WITHOUT clobbering the
+    # per-repo status checks a repo has legitimately added (e.g. rust/coverage).
+    #
+    # Deliberately NOT included here:
+    #   - bypass_actors Integration entries + admin "always": re-adding those
+    #     reverts the 2026-06-29 bypass-actor security remediation. Admin keeps a
+    #     "pull_request" bypass only.
+    #   - a code_scanning rule: GitHub's code-scanning merge-protection is flaky
+    #     (perpetually "expects results", deadlocking PRs). CodeQL is enforced via
+    #     a required_status_check instead, preserved per-repo above.
+    local existing_checks="${1:-[]}"
+    cat <<JSON
 {
   "name": "Base",
   "target": "branch",
   "enforcement": "active",
   "bypass_actors": [
-    {"actor_id": 5,       "actor_type": "RepositoryRole", "bypass_mode": "always"},
-    {"actor_id": 29110,   "actor_type": "Integration",    "bypass_mode": "always"},
-    {"actor_id": 1143301, "actor_type": "Integration",    "bypass_mode": "always"},
-    {"actor_id": 1236702, "actor_type": "Integration",    "bypass_mode": "always"}
+    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
   ],
   "conditions": {
     "ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}
@@ -109,12 +118,7 @@ build_payload() {
     {"type": "required_status_checks",
      "parameters": {"strict_required_status_checks_policy": false,
                     "do_not_enforce_on_create": true,
-                    "required_status_checks": []}},
-    {"type": "code_scanning",
-     "parameters": {"code_scanning_tools": [
-        {"tool": "CodeQL",
-         "alerts_threshold": "errors",
-         "security_alerts_threshold": "high_or_higher"}]}}
+                    "required_status_checks": ${existing_checks}}}
   ]
 }
 JSON
@@ -146,7 +150,15 @@ apply_one() {
         return 0
     fi
 
-    local payload; payload="$(build_payload)"
+    # Read the repo's own required status checks so the standardiser is additive
+    # (repairs the baseline rules) rather than wiping per-repo gates on the PUT.
+    local existing_checks='[]'
+    if [[ -n "${existing_id}" ]]; then
+        existing_checks="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${existing_id}" \
+            --jq '([.rules[]? | select(.type=="required_status_checks") | .parameters.required_status_checks] | add) // []' 2>/dev/null || echo '[]')"
+        [[ -z "${existing_checks}" || "${existing_checks}" == "null" ]] && existing_checks='[]'
+    fi
+    local payload; payload="$(build_payload "${existing_checks}")"
     local attempt
     for attempt in 1 2; do
         if gh api "${url}" --method "${method}" --input - <<< "${payload}" >/dev/null 2>&1; then
