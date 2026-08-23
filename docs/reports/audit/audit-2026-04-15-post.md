@@ -24,7 +24,7 @@ Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 - System command execution in lib/script_manager/dependency_fixer.ex
 - System command execution in lib/script_manager/toolchain_linker.ex
 - Hardcoded /tmp/ path without mktemp in scripts/update_repos.sh
-- flake.nix declares inputs without narHash, rev pinning, or sibling flake.lock — dependency revision is unpinned in flake.nix
+- flake.guix declares inputs without narHash, rev pinning, or sibling flake.lock — dependency revision is unpinned in flake.guix
 - Hardcoded /tmp/ path without mktemp in launchers/git-scripts-launcher.sh
 - DOM manipulation (innerHTML/document.write) in ui/dist/assets/index-98F1FyxW.js
 - 1 HTTP (non-HTTPS) URLs in ui/dist/assets/index-98F1FyxW.js
