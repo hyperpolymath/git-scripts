@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// Ported via Harvard Engine (Semantic pass)
+
+module Main;
+
+fn _ = App.start()
+
+

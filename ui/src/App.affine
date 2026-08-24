@@ -1,16 +1,21 @@
-type apiState =
+// SPDX-License-Identifier: MPL-2.0
+// Ported via Harvard Engine (Semantic pass)
+
+module App;
+
+struct apiState {
   | Idle
   | Loading
   | Loaded(string)
   | Failed(string)
 
-type scriptAction = {
+struct scriptAction { {
   id: string,
   label: string,
   detail: string,
 }
 
-type model = {
+struct model { {
   route: CadreTeaRouter.route,
   harCategory: string,
   harTarget: string,
@@ -20,7 +25,7 @@ type model = {
   scriptRun: apiState,
 }
 
-type msg =
+struct msg {
   | SyncRoute
   | Navigate(CadreTeaRouter.route)
   | SetHarCategory(string)
@@ -34,7 +39,7 @@ type msg =
   | HarRouteResult(result<string, Tea.Http.error>)
   | ScriptResult(result<string, Tea.Http.error>)
 
-let scriptActions: array<scriptAction> = [
+fn scriptActions: array<scriptAction> = [
   {
     id: "wiki_audit",
     label: "Wiki Audit",
@@ -77,8 +82,8 @@ let scriptActions: array<scriptAction> = [
   },
 ]
 
-let init = (): (model, Tea.Cmd.t<msg>) => {
-  let route = CadreTeaRouter.currentRoute()
+fn init = (): (model, Tea.Cmd.t<msg>) => {
+  fn route = CadreTeaRouter.currentRoute()
   (
     {
       route,
@@ -93,9 +98,9 @@ let init = (): (model, Tea.Cmd.t<msg>) => {
   )
 }
 
-let failWithHttpError = (httpError: Tea.Http.error): apiState => Failed(Tea.Http.errorToString(httpError))
+fn failWithHttpError = (httpError: Tea.Http.error): apiState => Failed(Tea.Http.errorToString(httpError))
 
-let update = (model: model, msg: msg): (model, Tea.Cmd.t<msg>) => {
+fn update = (model: model, msg: msg): (model, Tea.Cmd.t<msg>) => {
   switch msg {
   | SyncRoute => ({...model, route: CadreTeaRouter.currentRoute()}, Tea.Cmd.none)
   | Navigate(route) => {
@@ -118,11 +123,11 @@ let update = (model: model, msg: msg): (model, Tea.Cmd.t<msg>) => {
       HarApi.fetchTargets(result => HarTargetsResult(result)),
     )
   | RunHarRoute => {
-      let category = model.harCategory->String.trim
+      fn category = model.harCategory->String.trim
       if category == "" {
         ({...model, harRoute: Failed("Category is required.")}, Tea.Cmd.none)
       } else {
-        let target =
+        fn target =
           switch model.harTarget->String.trim {
           | "" => None
           | value => Some(value)
@@ -164,7 +169,7 @@ let update = (model: model, msg: msg): (model, Tea.Cmd.t<msg>) => {
   }
 }
 
-let viewApiState = (state: apiState): Tea.Html.t<msg> => {
+fn viewApiState = (state: apiState): Tea.Html.t<msg> => {
   open Tea.Html
   switch state {
   | Idle => div(list{Attrs.class_("status")}, list{text("Idle.")})
@@ -181,13 +186,13 @@ let viewApiState = (state: apiState): Tea.Html.t<msg> => {
   }
 }
 
-let viewTab = (activeRoute: CadreTeaRouter.route, route: CadreTeaRouter.route): Tea.Html.t<msg> => {
+fn viewTab = (activeRoute: CadreTeaRouter.route, route: CadreTeaRouter.route): Tea.Html.t<msg> => {
   open Tea.Html
-  let className = if activeRoute == route { "tab active" } else { "tab" }
+  fn className = if activeRoute == route { "tab active" } else { "tab" }
   button(list{Attrs.class_(className), Events.onClick(Navigate(route))}, list{text(CadreTeaRouter.label(route))})
 }
 
-let viewScriptAction = (action: scriptAction): Tea.Html.t<msg> => {
+fn viewScriptAction = (action: scriptAction): Tea.Html.t<msg> => {
   open Tea.Html
   li(
     list{},
@@ -206,7 +211,7 @@ let viewScriptAction = (action: scriptAction): Tea.Html.t<msg> => {
   )
 }
 
-let viewDashboard = (model: model): Tea.Html.t<msg> => {
+fn viewDashboard = (model: model): Tea.Html.t<msg> => {
   open Tea.Html
   fragment(
     list{
@@ -251,9 +256,9 @@ let viewDashboard = (model: model): Tea.Html.t<msg> => {
   )
 }
 
-let viewOperations = (model: model): Tea.Html.t<msg> => {
+fn viewOperations = (model: model): Tea.Html.t<msg> => {
   open Tea.Html
-  let actionNodes = scriptActions->Array.map(viewScriptAction)->List.fromArray
+  fn actionNodes = scriptActions->Array.map(viewScriptAction)->List.fromArray
 
   fragment(
     list{
@@ -279,7 +284,7 @@ let viewOperations = (model: model): Tea.Html.t<msg> => {
   )
 }
 
-let viewHybridRouter = (model: model): Tea.Html.t<msg> => {
+fn viewHybridRouter = (model: model): Tea.Html.t<msg> => {
   open Tea.Html
   fragment(
     list{
@@ -334,7 +339,7 @@ let viewHybridRouter = (model: model): Tea.Html.t<msg> => {
   )
 }
 
-let view = (model: model): Tea.Html.t<msg> => {
+fn view = (model: model): Tea.Html.t<msg> => {
   open Tea.Html
   div(
     list{Attrs.class_("shell")},
@@ -370,9 +375,9 @@ let view = (model: model): Tea.Html.t<msg> => {
   )
 }
 
-let subscriptions = (_model: model): Tea.Sub.t<msg> => CadreTeaRouter.subscriptions(SyncRoute)
+fn subscriptions = (_model: model): Tea.Sub.t<msg> => CadreTeaRouter.subscriptions(SyncRoute)
 
-let start = () => {
+fn start = () => {
   Tea.standardProgram(
     ~init,
     ~update,
@@ -381,3 +386,4 @@ let start = () => {
     (),
   )
 }
+

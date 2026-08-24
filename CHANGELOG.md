@@ -22,7 +22,7 @@ this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - feat(safety): owner allowlist + two-tier menu with clearer item names (#1)
 - feat(script_manager): incorporate 3 hyperpolymath estate batch scripts as Elixir rules
-- feat(ui): add ReScript-TEA Cadre router with HAR/script API bridge
+- feat(ui): add AffineScript-TEA Cadre router with HAR/script API bridge
 - feat(crg): add crg-grade and crg-badge justfile recipes
 
 ### Fixed

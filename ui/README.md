@@ -2,9 +2,9 @@
 SPDX-License-Identifier: CC-BY-SA-4.0
 Copyright (c) Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 -->
-# Git Scripts UI (ReScript + TEA)
+# Git Scripts UI (AffineScript + TEA)
 
-This is a ReScript-TEA UI for `git-scripts` with:
+This is a AffineScript-TEA UI for `git-scripts` with:
 
 - Cadre-style typed route module (`src/CadreTeaRouter.res`)
 - Hybrid Automation Router API wiring (`/api/har/*`)
@@ -21,14 +21,14 @@ npm run dev
 `npm run dev` starts:
 
 - API server on `http://127.0.0.1:4077` (`server.mjs`)
-- ReScript compiler watch
+- AffineScript compiler watch
 - Vite dev UI on `http://127.0.0.1:5174`
 
 ## Build
 
 ```bash
 cd /var/mnt/eclipse/repos/git-scripts/ui
-rm -f lib/rescript.lock
+rm -f lib/affinescript.lock
 npm run build
 ```
 
