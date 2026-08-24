@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-// SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell
-// Ported via Harvard Engine bulk-processor
+// Ported via Harvard Engine (Semantic pass)
 
 module Main;
 
-// TODO: Complete semantic implementation
+fn _ = App.start()
+
+
