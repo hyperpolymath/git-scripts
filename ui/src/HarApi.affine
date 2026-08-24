@@ -1,7 +1,53 @@
 // SPDX-License-Identifier: MPL-2.0
-// SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell
-// Ported via Harvard Engine bulk-processor
+// Ported via Harvard Engine (Semantic pass)
 
 module HarApi;
 
-// TODO: Complete semantic implementation
+@val external jsonStringify: 'a => string = "JSON.stringify"
+
+fn decodeRawString = (body: string): result<string, string> => Ok(body)
+
+fn makeJsonBody = (pairs: array<(string, string)>): string => {
+  fn dict = Js.Dict.empty()
+  Array.forEach(pairs, ((key, value)) => Js.Dict.set(dict, key, value))
+  jsonStringify(dict)
+}
+
+fn fetchStatus = (toMsg: result<string, Tea.Http.error> => 'msg): Tea.Cmd.t<'msg> => {
+  Tea.Http.getString(~url="/api/har/status", ~toMsg)
+}
+
+fn fetchTargets = (toMsg: result<string, Tea.Http.error> => 'msg): Tea.Cmd.t<'msg> => {
+  Tea.Http.getString(~url="/api/har/targets", ~toMsg)
+}
+
+fn routeCategory = (
+  ~category: string,
+  ~target: option<string>,
+  ~toMsg: result<string, Tea.Http.error> => 'msg,
+): Tea.Cmd.t<'msg> => {
+  fn trimmedTarget = target->Option.map(String.trim)
+  fn body =
+    switch trimmedTarget {
+    | Some(value) if value != "" => makeJsonBody([("category", category), ("target", value)])
+    | _ => makeJsonBody([("category", category)])
+    }
+
+  Tea.Http.postJson(
+    ~url="/api/har/route",
+    ~body,
+    ~decoder=decodeRawString,
+    ~toMsg,
+  )
+}
+
+fn runScript = (~action: string, ~toMsg: result<string, Tea.Http.error> => 'msg): Tea.Cmd.t<'msg> => {
+  fn body = makeJsonBody([("action", action)])
+  Tea.Http.postJson(
+    ~url="/api/scripts/run",
+    ~body,
+    ~decoder=decodeRawString,
+    ~toMsg,
+  )
+}
+

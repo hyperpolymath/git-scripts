@@ -1,7 +1,51 @@
 // SPDX-License-Identifier: MPL-2.0
-// SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell
-// Ported via Harvard Engine bulk-processor
+// Ported via Harvard Engine (Semantic pass)
 
 module CadreTeaRouter;
 
-// TODO: Complete semantic implementation
+struct route {
+  | Dashboard
+  | Operations
+  | HybridRouter
+
+fn fromPath = (path: string): route => {
+  switch path {
+  | "/operations" => Operations
+  | "/har" => HybridRouter
+  | _ => Dashboard
+  }
+}
+
+fn toPath = (route: route): string => {
+  switch route {
+  | Dashboard => "/"
+  | Operations => "/operations"
+  | HybridRouter => "/har"
+  }
+}
+
+fn label = (route: route): string => {
+  switch route {
+  | Dashboard => "Dashboard"
+  | Operations => "Operations"
+  | HybridRouter => "Hybrid Router"
+  }
+}
+
+fn currentPath = (): string => %raw(`window.location.pathname || "/"`)
+
+fn currentRoute = (): route => fromPath(currentPath())
+
+fn subscriptions = (msg: 'msg): Tea.Sub.t<'msg> => {
+  Tea.Window.onPopState(msg)
+}
+
+fn navigate = (route: route, syncMsg: 'msg): Tea.Cmd.t<'msg> => {
+  Tea.Cmd.call(callbacks => {
+    fn path = toPath(route)
+    fn _ = %raw(`window.history.pushState({}, "", path)`)
+    callbacks.enqueue(syncMsg)
+  })
+}
+
+
