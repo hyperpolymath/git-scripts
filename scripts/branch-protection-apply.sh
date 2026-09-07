@@ -93,13 +93,14 @@ fi
 # -----------------------------------------------------------------------------
 
 build_payload() {
+    local existing_policy="$1"
     jq -ce '
       {name, target, enforcement, bypass_actors, conditions, rules}
       | reduce ["deletion", "non_fast_forward", "required_linear_history",
                 "required_signatures"][] as $type (.;
           if any(.rules[]; .type == $type) then .
           else .rules += [{type: $type}] end)
-    ' <<< "$1"
+    ' <<< "${existing_policy}"
 }
 
 # -----------------------------------------------------------------------------
@@ -127,7 +128,8 @@ apply_one() {
     candidates="$(jq -c '[.[][] | select(.target == "branch" and
         (.name == "Base" or .name == "Optimus-Branch"))]' <<< "${pages}")" || return 1
     if ! jq -e --arg repo "${OWNER}/${repo_name}" 'length == 1 and
-        .[0].source_type == "Repository" and .[0].source == $repo' \
+        .[0].source_type == "Repository" and
+        (.[0].source | ascii_downcase) == ($repo | ascii_downcase)' \
         <<< "${candidates}" >/dev/null; then
         gs::error "${prefix}: missing, inherited or ambiguous baseline; needs profile review; no write"
         return 1
@@ -142,7 +144,7 @@ apply_one() {
     if ! jq -e --argjson id "${existing_id}" --arg name "${existing_name}" \
         --arg repo "${OWNER}/${repo_name}" '
         type == "object" and .id == $id and .name == $name and
-        .source_type == "Repository" and .source == $repo and
+        .source_type == "Repository" and (.source | ascii_downcase) == ($repo | ascii_downcase) and
         .target == "branch" and .enforcement == "active" and
         (.bypass_actors | type == "array") and
         (.conditions | type == "object") and
@@ -154,7 +156,8 @@ apply_one() {
     fi
     payload="$(build_payload "${before}")" || return 1
     if jq -e --argjson wanted "${payload}" \
-        '{name,target,enforcement,bypass_actors,conditions,rules} == $wanted' \
+        '({name,target,enforcement,bypass_actors,conditions,rules} | .rules |= sort_by(.type))
+         == ($wanted | .rules |= sort_by(.type))' \
         <<< "${before}" >/dev/null; then
         gs::info "${prefix}: baseline already has all four protections (${default_branch})"
         return 0
@@ -180,7 +183,9 @@ apply_one() {
     fi
     if ! after="$(gh api "${url}")" ||
         ! jq -e --argjson id "${existing_id}" --argjson wanted "${payload}" \
-            '.id == $id and ({name,target,enforcement,bypass_actors,conditions,rules} == $wanted)' \
+            '.id == $id and
+             (({name,target,enforcement,bypass_actors,conditions,rules} | .rules |= sort_by(.type))
+              == ($wanted | .rules |= sort_by(.type)))' \
             <<< "${after}" >/dev/null; then
         gs::error "${prefix}: update read-back failed; inspect #${existing_id}; snapshot ${backup}"
         return 1
@@ -198,7 +203,8 @@ if [[ -n "${OPT_REPO}" ]]; then
         gs::die "could not read requested repository; no ruleset writes"
     fi
     if ! REPOS="$(jq -ce --arg repo "${OWNER}/${OPT_REPO}" \
-        'if .nameWithOwner == $repo then [.] else error("repository identity mismatch") end' <<< "${REPO}")"; then
+        'if (.nameWithOwner | ascii_downcase) == ($repo | ascii_downcase)
+         then [.] else error("repository identity mismatch") end' <<< "${REPO}")"; then
         gs::die "invalid requested repository; no ruleset writes"
     fi
 else
@@ -210,7 +216,7 @@ fi
 if ! jq -e --arg owner "${OWNER}" --argjson limit "${LIMIT}" '
     type == "array" and length <= $limit and all(.[];
       (.name | type == "string" and test("^[A-Za-z0-9_.-]+$")) and
-      .nameWithOwner == ($owner + "/" + .name) and
+      (.nameWithOwner | ascii_downcase) == (($owner + "/" + .name) | ascii_downcase) and
       (.isArchived | type == "boolean") and
       (.defaultBranchRef == null or (.defaultBranchRef.name | type == "string" and length > 0)))
     and ((map(.name) | unique | length) == length)' <<< "${REPOS}" >/dev/null; then

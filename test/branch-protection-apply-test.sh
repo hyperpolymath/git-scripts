@@ -64,7 +64,7 @@ if [[ "${endpoint}" == */rulesets || "${endpoint}" == */rulesets\?* ]]; then
     fi
     exit 0
 fi
-if [[ "${endpoint}" == repos/hyperpolymath/example/rulesets/42 ]]; then
+if [[ "${endpoint,,}" == repos/hyperpolymath/example/rulesets/42 ]]; then
     reads=0
     if [[ -f "${CASE_DIR}/reads" ]]; then read -r reads < "${CASE_DIR}/reads"; fi
     reads=$((reads+1)); printf '%s\n' "${reads}" > "${CASE_DIR}/reads"
@@ -75,7 +75,14 @@ if [[ "${endpoint}" == repos/hyperpolymath/example/rulesets/42 ]]; then
     if [[ "${SCENARIO}" == racing && "${reads}" -ge 2 ]]; then
         jq '.conditions.ref_name.exclude += ["refs/heads/release"]' "${CASE_DIR}/before.json" | emit
     elif [[ -f "${CASE_DIR}/after.json" && "${SCENARIO}" != mismatch ]]; then
-        emit < "${CASE_DIR}/after.json"
+        if [[ "${SCENARIO}" == reordered ]]; then
+            jq '.rules |= reverse' "${CASE_DIR}/after.json" | emit
+        elif [[ "${SCENARIO}" == altered-parameter ]]; then
+            jq '(.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count)=0' \
+                "${CASE_DIR}/after.json" | emit
+        else
+            emit < "${CASE_DIR}/after.json"
+        fi
     else
         emit < "${CASE_DIR}/before.json"
     fi
@@ -111,8 +118,9 @@ JSON
 }
 
 change() {
-    jq "$2" "${CASE_DIR}/$1.json" > "${CASE_DIR}/changed.json"
-    mv "${CASE_DIR}/changed.json" "${CASE_DIR}/$1.json"
+    local file="$1" filter="$2"
+    jq "${filter}" "${CASE_DIR}/${file}.json" > "${CASE_DIR}/changed.json"
+    mv "${CASE_DIR}/changed.json" "${CASE_DIR}/${file}.json"
 }
 
 run_case() {
@@ -187,6 +195,12 @@ fixture single-repo
 run_case single-repo success 0 --repo example --dry-run
 fixture wrong-single-repo
 run_case wrong-single-repo failure 0 --repo unexpected --dry-run
+fixture mixed-case-owner
+run_case mixed-case-owner success 0 --owner HyperPolyMath --repo ExAMPle --dry-run
+fixture reordered
+run_case reordered success 1
+fixture altered-parameter
+run_case altered-parameter failure 1
 
 fixture repair
 run_case repair success 1
