@@ -31,3 +31,14 @@ jobs:
         run: |
           bash -n scripts/branch-protection-apply.sh test/branch-protection-apply-test.sh
           bash test/branch-protection-apply-test.sh
+      - name: Build the maintenance CLI package
+        run: docker build --file Containerfile.maintenance --tag git-scripts-maintenance:test .
+      - name: Exercise the package without network or a writable root filesystem
+        run: |
+          # The suite creates an executable gh test double in /tmp.
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,uid=10001,gid=10001 \
+            --tmpfs /state:rw,nosuid,nodev,uid=10001,gid=10001 \
+            --entrypoint bash git-scripts-maintenance:test \
+            /opt/git-scripts/test/branch-protection-apply-test.sh
