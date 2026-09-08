@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MPL-2.0
+# A runnable package for the branch-policy maintenance CLI and its tests.
+FROM docker.io/library/ubuntu:24.04@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+
+RUN apt-get update \
+    && apt-get upgrade --no-install-recommends -y \
+    && apt-get install --no-install-recommends -y \
+       bash ca-certificates coreutils curl diffutils findutils gawk git grep jq sed util-linux \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 maintenance \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin maintenance \
+    && mkdir -p /state \
+    && chown 10001:10001 /state
+
+# Ubuntu 24.04's gh 2.45 lacks the --slurp capability used by the applier.
+# Install the upstream immutable release and verify its published asset digest.
+RUN cli_arch="$(dpkg --print-architecture)" \
+    && case "${cli_arch}" in \
+       amd64) cli_sha=698c8d88cc19cc92bfe96bad58d10b2a5b274c52433d6dc57799c81f6139d5fc ;; \
+       arm64) cli_sha=33ccd2ad7ce639c927e1cb209e36555b0e1fbb89f7a38239c0568040ec758612 ;; \
+       *) echo "Unsupported CLI architecture: ${cli_arch}" >&2; exit 1 ;; \
+       esac \
+    && curl --fail --location --retry 3 \
+       "https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_linux_${cli_arch}.deb" \
+       --output /tmp/gh.deb \
+    && printf '%s  %s\n' "${cli_sha}" /tmp/gh.deb | sha256sum --check - \
+    && dpkg --install /tmp/gh.deb \
+    && rm /tmp/gh.deb
+
+WORKDIR /opt/git-scripts
+COPY scripts/branch-protection-apply.sh scripts/branch-protection-apply.sh
+COPY scripts/lib/common.sh scripts/lib/common.sh
+COPY config/owners.config config/owners.config
+COPY test/branch-protection-apply-test.sh test/branch-protection-apply-test.sh
+
+ENV GS_BACKUP_DIR=/state/backups \
+    GS_STATE_DIR=/state/snapshots \
+    GS_LOCK_DIR=/state/locks \
+    GS_REPORT_DIR=/state/reports \
+    XDG_CACHE_HOME=/state/cache \
+    XDG_CONFIG_HOME=/state/config
+USER 10001:10001
+
+# Check the packaged files as the runtime user. The suite mocks every gh call.
+RUN bash -n scripts/branch-protection-apply.sh test/branch-protection-apply-test.sh \
+    && gh api --help | grep -q -- --slurp \
+    && bash test/branch-protection-apply-test.sh
+
+ENTRYPOINT ["bash", "/opt/git-scripts/scripts/branch-protection-apply.sh"]
+CMD ["--help"]
