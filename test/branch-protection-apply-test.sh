@@ -92,6 +92,7 @@ echo "unexpected endpoint: ${endpoint}" >&2; exit 2
 MOCK
 chmod +x "${TEST_ROOT}/bin/gh"
 
+# Create an isolated repository and ruleset fixture for one test scenario.
 fixture() {
     CASE_DIR="${TEST_ROOT}/$1"
     export CASE_DIR
@@ -117,12 +118,14 @@ JSON
 JSON
 }
 
+# Apply a jq filter to one of the current scenario's JSON fixture files.
 change() {
     local file="$1" filter="$2"
     jq "${filter}" "${CASE_DIR}/${file}.json" > "${CASE_DIR}/changed.json"
     mv "${CASE_DIR}/changed.json" "${CASE_DIR}/${file}.json"
 }
 
+# Run the applier and assert its exit status and mutation count.
 run_case() {
     local name="$1" expected="$2" writes="$3" rc=0
     shift 3
