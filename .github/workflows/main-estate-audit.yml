@@ -1,0 +1,12 @@
+name: Central Estate CI/CD Audit
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_call:
+
+jobs:
+  call-estate-audit:
+    uses: hyperpolymath/cicd-suite/.github/workflows/main-estate-audit.yml@feat/cicd-workflow-call
