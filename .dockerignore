@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MPL-2.0
+# The maintenance build sends only its runtime and test inputs to the builder.
+**
+!Containerfile.maintenance
+!scripts/
+!scripts/branch-protection-apply.sh
+!scripts/lib/
+!scripts/lib/common.sh
+!config/
+!config/owners.config
+!test/
+!test/branch-protection-apply-test.sh

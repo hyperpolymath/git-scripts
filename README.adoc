@@ -45,6 +45,37 @@ mix compile
 mix escript.build
 ----
 
+=== Branch-policy maintenance package
+
+`Containerfile.maintenance` packages the Bash branch-policy repair CLI with its
+GitHub CLI, JSON and system-tool dependencies. It includes the offline regression
+suite and runs as UID/GID 10001. This package covers the maintenance CLI; the
+Elixir TUI build above remains a separate component. Guix is the estate's primary
+packaging route; this container provides a buildable maintenance environment on
+hosts where Guix is unavailable.
+
+[source,bash]
+----
+podman build -f Containerfile.maintenance -t localhost/git-scripts-maintenance .
+podman run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --tmpfs /tmp:rw,nosuid,nodev,uid=10001,gid=10001 \
+  --tmpfs /state:rw,nosuid,nodev,uid=10001,gid=10001 \
+  localhost/git-scripts-maintenance --help
+----
+
+For an authenticated dry run, allow network access and pass an existing
+`GH_TOKEN` with `--env GH_TOKEN`. Select a single repository with
+`--repo NAME --dry-run`. An actual repair needs repository Administration write
+permission and a persistent `/state` volume for its pre-change snapshots and
+reports. The CLI never creates missing baselines or changes tag rulesets.
+
+The base image is pinned by digest. Distribution packages are resolved at build
+time, so rebuilding on another date can change package versions; the result is
+not claimed to be a reproducible build. Governance CI builds the image and runs
+its tests with networking disabled, a read-only root filesystem and no Linux
+capabilities. Docker can run the same commands and OCI image.
+
 == Implementation Details
 
 Each function is implemented as an Elixir module:

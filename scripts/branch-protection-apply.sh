@@ -2,31 +2,33 @@
 # SPDX-License-Identifier: MPL-2.0
 # SPDX-FileCopyrightText: 2026 Jonathan D.A. Jewell <j.d.a.jewell@open.ac.uk>
 #
-# branch-protection-apply.sh — apply the canonical "Base" ruleset to all
-# hyperpolymath GitHub repos via the rulesets API.
+# branch-protection-apply.sh — repair an existing Base/Optimus-Branch baseline.
 #
 # Self-healing/safe behaviour:
-#   * Always validates gh auth + rate-limit headroom before any write.
-#   * Updates pre-existing rulesets in place rather than creating duplicates.
-#   * Per-repo failure is captured + retried once (transient 5xx); the
-#     overall run continues so one flake does not poison the batch.
+#   * Validates gh auth and reports rate-limit headroom before any write.
+#   * Preserves the entire existing policy, including other ruleset layers.
+#   * Failed, malformed, incomplete or ambiguous reads never authorise writes.
+#   * Does not provision missing baselines: those need a repository profile.
 #   * Honours --dry-run; never writes when set.
 #   * Emits an A2ML report of every repo's outcome at $GS_REPORT_DIR.
-#   * Exits non-zero only on persistent (post-retry) failures.
+#   * Verifies writes by reading back; does not retry an ambiguous mutation.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 . "${SCRIPT_DIR}/lib/common.sh"
 
 GS_SCRIPT_NAME="branch-protection-apply"
-GS_HELP_TEXT="Usage: branch-protection-apply.sh [--dry-run] [--owner X] [--limit N] [--report] [--help]
+GS_HELP_TEXT="Usage: branch-protection-apply.sh [--dry-run] [--owner X] [--repo NAME] [--limit N] [--report] [--help]
 
-Applies the canonical 'Base' branch ruleset to every non-archived hyperpolymath
-repo. Updates existing 'Base' rulesets in place (no duplicates).
+Adds missing deletion, force-push, linear-history and signature protections to
+an existing active 'Base' or 'Optimus-Branch' repository ruleset. Preserves its
+other rules, checks, bypass actors and branch scope. Missing, inherited,
+inactive or ambiguous baselines fail for profile-specific review.
 
 Options:
   -n, --dry-run    Print what WOULD change; make no API writes.
       --owner X    GitHub org/user (default: hyperpolymath)
+      --repo NAME  Limit the repair to one repository under --owner
       --limit N    Max repos to fetch (default 600)
       --report     Write structured A2ML report to \$GS_REPORT_DIR
   -y, --yes        Skip the confirmation prompt
@@ -42,7 +44,7 @@ gs::lock branch-protection-apply
 
 OWNER="hyperpolymath"
 LIMIT=600
-RULESET_NAME="Base"
+OPT_REPO=""
 OPT_REPORT=0
 
 while (( $# > 0 )); do
@@ -50,6 +52,7 @@ while (( $# > 0 )); do
         -n|--dry-run) GS_DRY_RUN=1 ;;
         -y|--yes)     GS_YES=1 ;;
         --owner)      OWNER="${2:?}"; shift ;;
+        --repo)       OPT_REPO="${2:?}"; shift ;;
         --limit)      LIMIT="${2:?}"; shift ;;
         --report)     OPT_REPORT=1 ;;
         -v|--verbose) GS_LOG_LEVEL=debug ;;
@@ -60,9 +63,14 @@ while (( $# > 0 )); do
     shift
 done
 
+[[ "${OWNER}" =~ ^[A-Za-z0-9][A-Za-z0-9-]*$ ]] || gs::die "invalid owner"
+[[ "${LIMIT}" =~ ^[1-9][0-9]{0,5}$ ]] || gs::die "limit must be between 1 and 999999"
+[[ -z "${OPT_REPO}" || "${OPT_REPO}" =~ ^[A-Za-z0-9_.-]+$ ]] || gs::die "invalid repository name"
+gs::assert_owner_allowed "${OWNER}"
+
 REPORT_FILE=""
 if (( OPT_REPORT )); then
-    REPORT_FILE="$(gs::report_path)"
+    REPORT_FILE="$(gs::report_path "${GS_SCRIPT_NAME}")"
     gs::info "writing report to ${REPORT_FILE}"
 fi
 
@@ -76,111 +84,147 @@ gs::gh_check
 gs::info "rate-limit remaining: $(gs::gh_remaining)"
 
 if ! gs::is_dry_run; then
-    gs::confirm "About to apply '${RULESET_NAME}' ruleset to up to ${LIMIT} ${OWNER} repos. Proceed?" \
+    gs::confirm "About to repair existing baseline rulesets for ${OWNER}/${OPT_REPO:-all repositories, limit ${LIMIT}}. Proceed?" \
         || gs::die "aborted by user"
 fi
 
 # -----------------------------------------------------------------------------
-# Build payload (defined-once, parameterised by the repo's default branch).
+# Writable ruleset fields, with only missing baseline rule types added.
 # -----------------------------------------------------------------------------
 
 build_payload() {
-    # $1 = the repo's EXISTING required_status_checks array (JSON). Preserved so
-    # this standardiser repairs the invariant baseline WITHOUT clobbering the
-    # per-repo status checks a repo has legitimately added (e.g. rust/coverage).
-    #
-    # Deliberately NOT included here:
-    #   - bypass_actors Integration entries + admin "always": re-adding those
-    #     reverts the 2026-06-29 bypass-actor security remediation. Admin keeps a
-    #     "pull_request" bypass only.
-    #   - a code_scanning rule: GitHub's code-scanning merge-protection is flaky
-    #     (perpetually "expects results", deadlocking PRs). CodeQL is enforced via
-    #     a required_status_check instead, preserved per-repo above.
-    local existing_checks="${1:-[]}"
-    cat <<JSON
-{
-  "name": "Base",
-  "target": "branch",
-  "enforcement": "active",
-  "bypass_actors": [
-    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
-  ],
-  "conditions": {
-    "ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}
-  },
-  "rules": [
-    {"type": "deletion"},
-    {"type": "non_fast_forward"},
-    {"type": "required_linear_history"},
-    {"type": "required_signatures"},
-    {"type": "required_deployments",
-     "parameters": {"required_deployment_environments": []}},
-    {"type": "required_status_checks",
-     "parameters": {"strict_required_status_checks_policy": false,
-                    "do_not_enforce_on_create": true,
-                    "required_status_checks": ${existing_checks}}}
-  ]
-}
-JSON
+    local existing_policy="$1"
+    jq -ce '
+      {name, target, enforcement, bypass_actors, conditions, rules}
+      | reduce ["deletion", "non_fast_forward", "required_linear_history",
+                "required_signatures"][] as $type (.;
+          if any(.rules[]; .type == $type) then .
+          else .rules += [{type: $type}] end)
+    ' <<< "${existing_policy}"
 }
 
 # -----------------------------------------------------------------------------
-# Per-repo apply with retry-on-transient.
+# Per-repo repair. Unknown is an error, never an empty policy.
 # -----------------------------------------------------------------------------
 
 apply_one() {
     local repo_name="$1" default_branch="$2" prefix="$3"
-    local existing_id
-    existing_id="$(gh api "repos/${OWNER}/${repo_name}/rulesets" \
-        --jq ".[] | select(.name == \"${RULESET_NAME}\") | .id" 2>/dev/null || true)"
-
-    local method url verb_msg
-    if [[ -n "${existing_id}" ]]; then
-        method=PUT
-        url="repos/${OWNER}/${repo_name}/rulesets/${existing_id}"
-        verb_msg="UPDATE existing #${existing_id}"
-    else
-        method=POST
-        url="repos/${OWNER}/${repo_name}/rulesets"
-        verb_msg="CREATE"
+    local pages candidates existing_id existing_name url before payload fresh after backup
+    if ! pages="$(gh api "repos/${OWNER}/${repo_name}/rulesets?per_page=100" --paginate --slurp)"; then
+        gs::error "${prefix}: cannot list rulesets; no write"
+        return 1
     fi
-
-    if gs::is_dry_run; then
-        gs::info "${prefix}: WOULD ${verb_msg} (${default_branch})"
+    if ! jq -e 'type == "array" and length > 0 and all(.[];
+        type == "array" and all(.[];
+          (.id | type == "number" and . > 0 and . == floor) and
+          (.name | type == "string" and length > 0) and
+          (.target == "branch" or .target == "tag" or .target == "push") and
+          (.source_type | type == "string") and (.source | type == "string")))
+        and ((add | map(.id) | unique | length) == (add | length))' \
+        <<< "${pages}" >/dev/null; then
+        gs::error "${prefix}: invalid ruleset inventory; no write"
+        return 1
+    fi
+    candidates="$(jq -c '[.[][] | select(.target == "branch" and
+        (.name == "Base" or .name == "Optimus-Branch"))]' <<< "${pages}")" || return 1
+    if ! jq -e --arg repo "${OWNER}/${repo_name}" 'length == 1 and
+        .[0].source_type == "Repository" and
+        (.[0].source | ascii_downcase) == ($repo | ascii_downcase)' \
+        <<< "${candidates}" >/dev/null; then
+        gs::error "${prefix}: missing, inherited or ambiguous baseline; needs profile review; no write"
+        return 1
+    fi
+    existing_id="$(jq -r '.[0].id' <<< "${candidates}")" || return 1
+    existing_name="$(jq -r '.[0].name' <<< "${candidates}")" || return 1
+    url="repos/${OWNER}/${repo_name}/rulesets/${existing_id}"
+    if ! before="$(gh api "${url}")"; then
+        gs::error "${prefix}: cannot read baseline #${existing_id}; no write"
+        return 1
+    fi
+    if ! jq -e --argjson id "${existing_id}" --arg name "${existing_name}" \
+        --arg repo "${OWNER}/${repo_name}" '
+        type == "object" and .id == $id and .name == $name and
+        .source_type == "Repository" and (.source | ascii_downcase) == ($repo | ascii_downcase) and
+        .target == "branch" and .enforcement == "active" and
+        (.bypass_actors | type == "array") and
+        (.conditions | type == "object") and
+        (.rules | type == "array" and all(.[];
+          type == "object" and (.type | type == "string" and length > 0)))
+      ' <<< "${before}" >/dev/null; then
+        gs::error "${prefix}: invalid or inactive baseline; no write"
+        return 1
+    fi
+    payload="$(build_payload "${before}")" || return 1
+    if jq -e --argjson wanted "${payload}" \
+        '({name,target,enforcement,bypass_actors,conditions,rules} | .rules |= sort_by(.type))
+         == ($wanted | .rules |= sort_by(.type))' \
+        <<< "${before}" >/dev/null; then
+        gs::info "${prefix}: baseline already has all four protections (${default_branch})"
         return 0
     fi
-
-    # Read the repo's own required status checks so the standardiser is additive
-    # (repairs the baseline rules) rather than wiping per-repo gates on the PUT.
-    local existing_checks='[]'
-    if [[ -n "${existing_id}" ]]; then
-        existing_checks="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${existing_id}" \
-            --jq '([.rules[]? | select(.type=="required_status_checks") | .parameters.required_status_checks] | add) // []' 2>/dev/null || echo '[]')"
-        [[ -z "${existing_checks}" || "${existing_checks}" == "null" ]] && existing_checks='[]'
+    if gs::is_dry_run; then
+        gs::info "${prefix}: WOULD repair ${existing_name} #${existing_id} (${default_branch})"
+        return 0
     fi
-    local payload; payload="$(build_payload "${existing_checks}")"
-    local attempt
-    for attempt in 1 2; do
-        if gh api "${url}" --method "${method}" --input - <<< "${payload}" >/dev/null 2>&1; then
-            gs::info "${prefix}: ${verb_msg/WOULD /} ok (${default_branch})"
-            return 0
-        fi
-        gs::warn "${prefix}: ${verb_msg} attempt ${attempt} failed; backing off..."
-        sleep "$(( attempt * GS_GH_RETRY_BASE_S ))"
-    done
-    gs::error "${prefix}: ${verb_msg} failed after retry"
-    return 1
+    backup="${GS_STATE_DIR}/ruleset-${OWNER}-${repo_name}-${existing_id}-$(date -u +%Y%m%dT%H%M%S%N).json"
+    if ! printf '%s\n' "${before}" > "${backup}"; then
+        gs::error "${prefix}: could not save pre-change ruleset; no write"
+        return 1
+    fi
+    # Narrow the read/write race. GitHub does not offer a conditional ruleset PUT.
+    if ! fresh="$(gh api "${url}")" ||
+        ! jq -e --argjson before "${before}" '. == $before' <<< "${fresh}" >/dev/null; then
+        gs::error "${prefix}: baseline changed or became unreadable; no write"
+        return 1
+    fi
+    if ! gh api "${url}" --method PUT --input - <<< "${payload}" >/dev/null; then
+        gs::error "${prefix}: update failed or outcome unknown; inspect #${existing_id} before retry; snapshot ${backup}"
+        return 1
+    fi
+    if ! after="$(gh api "${url}")" ||
+        ! jq -e --argjson id "${existing_id}" --argjson wanted "${payload}" \
+            '.id == $id and
+             (({name,target,enforcement,bypass_actors,conditions,rules} | .rules |= sort_by(.type))
+              == ($wanted | .rules |= sort_by(.type)))' \
+            <<< "${after}" >/dev/null; then
+        gs::error "${prefix}: update read-back failed; inspect #${existing_id}; snapshot ${backup}"
+        return 1
+    fi
+    gs::info "${prefix}: verified repair of ${existing_name} #${existing_id}; snapshot ${backup}"
 }
 
 # -----------------------------------------------------------------------------
 # Main loop.
 # -----------------------------------------------------------------------------
 
-gs::info "fetching repos (limit ${LIMIT})..."
-mapfile -t REPO_ROWS < <(gh repo list "${OWNER}" \
-    --limit "${LIMIT}" \
-    --json name,defaultBranchRef,isArchived \
-    --jq '.[] | [.name, (.defaultBranchRef.name // "main"), .isArchived] | @tsv')
+gs::info "fetching repositories for ${OWNER}/${OPT_REPO:-all} (limit ${LIMIT})..."
+if [[ -n "${OPT_REPO}" ]]; then
+    if ! REPO="$(gh repo view "${OWNER}/${OPT_REPO}" --json name,nameWithOwner,defaultBranchRef,isArchived)"; then
+        gs::die "could not read requested repository; no ruleset writes"
+    fi
+    if ! REPOS="$(jq -ce --arg repo "${OWNER}/${OPT_REPO}" \
+        'if (.nameWithOwner | ascii_downcase) == ($repo | ascii_downcase)
+         then [.] else error("repository identity mismatch") end' <<< "${REPO}")"; then
+        gs::die "invalid requested repository; no ruleset writes"
+    fi
+else
+    if ! REPOS="$(gh repo list "${OWNER}" --limit "$(( LIMIT + 1 ))" \
+        --json name,nameWithOwner,defaultBranchRef,isArchived)"; then
+        gs::die "could not enumerate repositories; no ruleset writes"
+    fi
+fi
+if ! jq -e --arg owner "${OWNER}" --argjson limit "${LIMIT}" '
+    type == "array" and length <= $limit and all(.[];
+      (.name | type == "string" and test("^[A-Za-z0-9_.-]+$")) and
+      (.nameWithOwner | ascii_downcase) == (($owner + "/" + .name) | ascii_downcase) and
+      (.isArchived | type == "boolean") and
+      (.defaultBranchRef == null or (.defaultBranchRef.name | type == "string" and length > 0)))
+    and ((map(.name) | unique | length) == length)' <<< "${REPOS}" >/dev/null; then
+    gs::die "invalid or over-limit repository inventory; no ruleset writes (raise --limit if needed)"
+fi
+ROWS="$(jq -r '.[] | [.name, (.defaultBranchRef.name // "~NO_DEFAULT_BRANCH"), .isArchived] | @tsv' <<< "${REPOS}")"
+REPO_ROWS=()
+[[ -z "${ROWS}" ]] || mapfile -t REPO_ROWS <<< "${ROWS}"
 
 REPO_COUNT="${#REPO_ROWS[@]}"
 gs::info "found ${REPO_COUNT} repos"
@@ -196,9 +240,14 @@ for row in "${REPO_ROWS[@]}"; do
         gs::debug "${prefix}: skip (archived)"
         (( SK_ARC++ )) || true
         outcome="skipped-archived"
+    elif [[ "${default_branch}" == "~NO_DEFAULT_BRANCH" ]]; then
+        gs::error "${prefix}: no default branch; no write"
+        (( FAIL++ )) || true
+        outcome="failed-no-default-branch"
     elif apply_one "${repo_name}" "${default_branch}" "${prefix}"; then
         (( OK++ )) || true
-        outcome="ok"
+        outcome="verified-or-unchanged"
+        if gs::is_dry_run; then outcome="dry-run-validated"; fi
     else
         (( FAIL++ )) || true
         outcome="failed"
@@ -217,7 +266,7 @@ done
 # -----------------------------------------------------------------------------
 
 gs::banner "Summary"
-gs::info "total=${REPO_COUNT}  applied=${OK}  archived=${SK_ARC}  failed=${FAIL}"
+gs::info "total=${REPO_COUNT}  validated=${OK}  dry_run=${GS_DRY_RUN}  archived=${SK_ARC}  failed=${FAIL}"
 [[ -n "${REPORT_FILE}" ]] && gs::info "report: ${REPORT_FILE}"
 
 (( FAIL > 0 )) && exit 1
