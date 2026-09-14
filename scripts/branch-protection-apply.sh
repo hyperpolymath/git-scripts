@@ -231,9 +231,10 @@ fi
 # Build payload (defined-once, parameterised by the repo's default branch).
 # -----------------------------------------------------------------------------
 
-# Build the canonical ruleset payload while preserving repository-specific state.
-# Arguments: existing required checks JSON and existing bypass actors JSON.
-# Writes the resulting JSON object to stdout.
+# Build the canonical ruleset payload with repository-specific checks and bypass actors.
+# Arguments: required checks and bypass actors as JSON arrays; empty or null values become [].
+# Omits the required-checks rule when no checks remain, writes JSON to stdout,
+# and returns jq's status.
 build_payload() {
     # $1 = the repo's EXISTING required_status_checks array (JSON)
     # $2 = the repo's EXISTING bypass_actors array (JSON)
@@ -345,9 +346,10 @@ declare -i MERGE_METHOD_REFUSED=0
 # summary would report 0 drops however many it made.
 WITNESS_OUT='[]'
 WITNESS_PROVENANCE=''
-# Keep only required checks witnessed on recent default-branch heads.
+# Keep only required checks reported on sampled default-branch heads.
 # Arguments: owner, repository, checks JSON, log prefix, and default branch.
-# Stores results in WITNESS_OUT and WITNESS_PROVENANCE; fails safe on unreadable evidence.
+# Stores results in WITNESS_OUT and WITNESS_PROVENANCE. If no candidate evidence
+# can be read or the observed set is empty, preserves the input checks and returns success.
 witness_filter_checks() {
     local owner="$1" repo_name="$2" checks_json="$3" prefix="$4" default_branch="${5:-}"
     local sha heads cr st union kept dropped n_req n_kept map n_heads n_bad
@@ -478,8 +480,11 @@ witness_filter_checks() {
 }
 
 # Reconcile one repository's active default-branch ruleset with the canon.
-# Arguments: repository, default branch, log prefix, optional owner, and optional ruleset ID.
-# Sets LAST_OUTCOME and returns nonzero when a safe reconciliation cannot be proven.
+# Arguments: repository, default branch, log prefix, optional owner override,
+# and optional pinned ruleset ID.
+# May save a rollback snapshot and create or update the ruleset; honours dry-run
+# and no-create modes. Sets LAST_OUTCOME on success, returns non-zero for a refused
+# or failed API operation, and exits if rollback storage fails.
 apply_one() {
     local repo_name="$1" default_branch="$2" prefix="$3"
     # Owner is PER ROW. The estate spans two orgs (102 hyperpolymath + 18
