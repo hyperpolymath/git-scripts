@@ -153,7 +153,8 @@ gs::install_trap() {
 declare -a __GS_EXIT_HOOKS=()
 # Register a command or function call to run during process cleanup.
 gs::on_exit() { __GS_EXIT_HOOKS+=("$1"); }
-# Run registered cleanup hooks in LIFO order and preserve the process exit status.
+# Run registered cleanup hooks in LIFO order, prefix their combined output, ignore
+# hook failures, and preserve the process exit status.
 gs::__on_exit() {
     local code=$?
     local __gs_hook_out
