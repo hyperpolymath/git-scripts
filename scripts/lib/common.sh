@@ -129,6 +129,7 @@ gs::banner() {
 
 gs::__on_err() {
     local code=$?
+    local __gs_hook_out
     local cmd="${BASH_COMMAND:-?}"
     # Suppress noise on intentional exits: `exit N` and `return N`.
     case "${cmd}" in
@@ -152,10 +153,22 @@ declare -a __GS_EXIT_HOOKS=()
 gs::on_exit() { __GS_EXIT_HOOKS+=("$1"); }
 gs::__on_exit() {
     local code=$?
+    local __gs_hook_out
     local i
     # eval (not `bash -c`) so registered functions from this lib stay in scope.
     for (( i=${#__GS_EXIT_HOOKS[@]}-1 ; i>=0 ; i-- )); do
-        eval "${__GS_EXIT_HOOKS[i]}" 2>&1 | sed 's/^/  cleanup: /' >&2 || true
+        # NOT a pipeline. Running a hook that declares `local` inside a pipeline
+        # from the EXIT trap -- reached here by `exit` from within a function --
+        # makes bash pop a variable context that is not a function context, and
+        # it prints "pop_var_context: head of shell_variables not a function
+        # context" to stderr AFTER the script has logically finished. Harmless,
+        # but it reads as a crash in every failure log. Collect first, format after.
+        __gs_hook_out="$(eval "${__GS_EXIT_HOOKS[i]}" 2>&1 || true)"
+        # `[[ ]] && cmd` returns 1 when the test fails, and gs::strict has set -e:
+        # a silent hook would abort the remaining hooks mid-cleanup. Use `if`.
+        if [[ -n "${__gs_hook_out}" ]]; then
+            printf '%s\n' "${__gs_hook_out}" | sed 's/^/  cleanup: /' >&2
+        fi
     done
     return "${code}"
 }

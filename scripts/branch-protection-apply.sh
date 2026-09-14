@@ -21,14 +21,24 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 GS_SCRIPT_NAME="branch-protection-apply"
 GS_HELP_TEXT="Usage: branch-protection-apply.sh [--dry-run] [--owner X] [--limit N] [--report] [--help]
 
-Applies the canonical 'Base' branch ruleset to every non-archived hyperpolymath
-repo. Updates existing 'Base' rulesets in place (no duplicates).
+Applies the canonical branch ruleset (--canon, default standards/config/rulesets/base.json)
+to the target repos. Selects the existing ruleset by IDENTITY (active + target=branch +
+conditions include exactly ["~DEFAULT_BRANCH"]), never by name, and updates it in
+place; refuses any repo carrying two. Skips repos already canonical without writing.
 
 Options:
   -n, --dry-run    Print what WOULD change; make no API writes.
       --owner X    GitHub org/user (default: hyperpolymath)
       --limit N    Max repos to fetch (default 600)
       --report     Write structured A2ML report to \$GS_REPORT_DIR
+      --canon P    Canonical ruleset JSON (default: standards/config/rulesets/base.json)
+      --rollback-dir D  Save each pre-write ruleset JSON into D before any PUT
+      --no-create  Migrate existing rulesets only; never CREATE one where none exists
+      --repos-file F  Apply ONLY to the repos listed in F (field 1 = owner/repo, tab-sep);
+                   without it the run targets EVERY repo in --owner
+      --extras P   Overlay ruleset JSON (default: standards/config/rulesets/Optimus-Extras.json)
+      --overlay R  Create/update the Optimus-Extras OVERLAY on repo R, then exit
+      --overlay-off R  Delete the Optimus-Extras overlay from repo R, then exit
   -y, --yes        Skip the confirmation prompt
   -v, --verbose    Debug logging
   -q, --quiet      Warnings/errors only
@@ -43,7 +53,15 @@ gs::lock branch-protection-apply
 OWNER="hyperpolymath"
 LIMIT=600
 RULESET_NAME="Base"
+CANON_RULESET="${CANON_RULESET:-/home/hyperpolymath/developer/hyper-repos/standards/config/rulesets/base.json}"
+ROLLBACK_DIR="${ROLLBACK_DIR:-}"
+NO_CREATE="${NO_CREATE:-0}"
+REPOS_FILE="${REPOS_FILE:-}"
 OPT_REPORT=0
+EXTRAS_RULESET="${EXTRAS_RULESET:-/home/hyperpolymath/developer/hyper-repos/standards/config/rulesets/Optimus-Extras.json}"
+EXTRAS_NAME="Optimus-Extras"
+OVERLAY_REPO=""
+OVERLAY_MODE=""
 
 while (( $# > 0 )); do
     case "$1" in
@@ -52,6 +70,13 @@ while (( $# > 0 )); do
         --owner)      OWNER="${2:?}"; shift ;;
         --limit)      LIMIT="${2:?}"; shift ;;
         --report)     OPT_REPORT=1 ;;
+        --canon)      CANON_RULESET="${2:?}"; shift ;;
+        --rollback-dir) ROLLBACK_DIR="${2:?}"; shift ;;
+        --no-create)  NO_CREATE=1 ;;
+        --repos-file) REPOS_FILE="${2:?}"; shift ;;
+        --extras)     EXTRAS_RULESET="${2:?}"; shift ;;
+        --overlay)      OVERLAY_REPO="${2:?}"; OVERLAY_MODE=on;  shift ;;
+        --overlay-off)  OVERLAY_REPO="${2:?}"; OVERLAY_MODE=off; shift ;;
         -v|--verbose) GS_LOG_LEVEL=debug ;;
         -q|--quiet)   GS_LOG_LEVEL=warn ;;
         -h|--help)    printf '%s\n' "${GS_HELP_TEXT}"; exit 0 ;;
@@ -72,11 +97,133 @@ fi
 
 gs::banner "Branch-protection ruleset rollout — ${OWNER}"
 gs::need gh jq
+[[ -r "${CANON_RULESET}" ]] || gs::die "canonical ruleset not readable: ${CANON_RULESET}"
+jq -e '.rules | map(.type) | index("pull_request")' "${CANON_RULESET}" >/dev/null \
+    || gs::die "canon ${CANON_RULESET} has no pull_request rule -- refusing to strip PR enforcement"
+gs::info "canon: ${CANON_RULESET} ($(jq -r '[.rules[].type] | join(",")' "${CANON_RULESET}"))"
 gs::gh_check
 gs::info "rate-limit remaining: $(gs::gh_remaining)"
 
+# -----------------------------------------------------------------------------
+# LAYER DISJOINTNESS — Base and Optimus-Extras must not overlap.
+# -----------------------------------------------------------------------------
+# Owner ruling R4: "make the base as tight as possible, and layer the extras
+# that optimus adds on top, WITH NO DUPLICATION OF BASE. this allows me to turn
+# that on or off." A rule present in BOTH layers cannot be turned off by
+# removing the overlay -- Base still enforces it -- so the switch would lie.
+# Worse, it would lie SILENTLY: removing the overlay returns success and the
+# rule stays on. Fail loudly at load time instead of shipping a dishonest switch.
+#
+# Checked whenever the extras file exists, in EVERY mode -- not only in overlay
+# mode -- because a base.json amended to absorb an extras rule breaks the switch
+# just as thoroughly as an extras file that duplicates base, and the main sweep
+# is what would write that base.
+if [[ -r "${EXTRAS_RULESET}" ]]; then
+    jq -e 'type == "object" and (.rules | type == "array")' "${EXTRAS_RULESET}" >/dev/null 2>&1 \
+        || gs::die "extras ${EXTRAS_RULESET} is not a ruleset object with a .rules array"
+    overlap="$(jq -rn \
+        --slurpfile b "${CANON_RULESET}" --slurpfile x "${EXTRAS_RULESET}" \
+        '[ $b[0].rules[].type ] as $bt
+         | [ $x[0].rules[].type ] as $xt
+         | [ $xt[] | select( . as $t | $bt | index($t) ) ] | unique | join(", ")')"
+    if [[ -n "${overlap}" ]]; then
+        gs::die "LAYER OVERLAP -- these rule types appear in BOTH ${CANON_RULESET##*/} and ${EXTRAS_RULESET##*/}: ${overlap}. The overlay switch cannot turn them off, so it would lie. Remove them from the overlay (Base is the floor) and re-run."
+    fi
+    gs::info "layers disjoint: Base [$(jq -r '[.rules[].type]|join(",")' "${CANON_RULESET}")] / Extras [$(jq -r '[.rules[].type]|join(",")' "${EXTRAS_RULESET}")]"
+else
+    gs::debug "no extras file at ${EXTRAS_RULESET} (disjointness check skipped)"
+fi
+
+# -----------------------------------------------------------------------------
+# OVERLAY MODE — one repo, then exit (R4's on/off switch, R6's name).
+# -----------------------------------------------------------------------------
+# Deliberately a SEPARATE mode from the sweep rather than a per-repo column in
+# the targets file. The overlay is opt-in per repo and its rules are the
+# estate's own UNSAT_RULES set minus merge_queue -- rules measured here as
+# unsatisfiable. A flag that can only be aimed at ONE repo at a time cannot be
+# mass-applied by accident, which for this particular set is the whole point.
+if [[ -n "${OVERLAY_MODE}" ]]; then
+    ov_owner="${OWNER}"; ov_repo="${OVERLAY_REPO}"
+    [[ "${OVERLAY_REPO}" == */* ]] && { ov_owner="${OVERLAY_REPO%%/*}"; ov_repo="${OVERLAY_REPO##*/}"; }
+    ov_prefix="${ov_owner}/${ov_repo}"
+
+    # Find any existing overlay BY NAME on the default branch. Two-step, because
+    # the rulesets LIST endpoint omits .rules/.conditions/.bypass_actors
+    # entirely -- filtering the list on shape matches NOTHING (measured: 0 of
+    # 178). Name is the only field the list actually carries.
+    ov_id="$(gh api "repos/${ov_prefix}/rulesets" --paginate \
+               --jq ".[] | select(.name == \"${EXTRAS_NAME}\") | .id" 2>/dev/null | head -1 || true)"
+    # THIRD occurrence of the same trap: `gh api` PRINTS THE RESPONSE BODY on a
+    # 404, and `--jq` does not filter an error body, so a missing repo yields the
+    # literal JSON {"message":"Not Found",...} as the "id". Caught in test, where
+    # it produced `would UPDATE #{"message":"Not Found"...}` -- i.e. a PUT aimed at
+    # a garbage URL. An id is DIGITS or it is not an id.
+    [[ "${ov_id}" =~ ^[0-9]+$ ]] || ov_id=""
+
+    gs::is_dry_run || gs::confirm "About to turn the ${EXTRAS_NAME} overlay ${OVERLAY_MODE^^} on ${ov_prefix}. Proceed?" || gs::die "aborted by user"
+
+    if [[ "${OVERLAY_MODE}" == "off" ]]; then
+        if [[ -z "${ov_id}" ]]; then
+            gs::info "${ov_prefix}: no ${EXTRAS_NAME} overlay present -- nothing to remove"
+            exit 0
+        fi
+        if [[ -n "${ROLLBACK_DIR}" ]]; then
+            mkdir -p "${ROLLBACK_DIR}"
+            gh api "repos/${ov_prefix}/rulesets/${ov_id}" \
+                > "${ROLLBACK_DIR}/${ov_owner}-${ov_repo}-${ov_id}.json" 2>/dev/null \
+                || gs::die "${ov_prefix}: could not snapshot overlay #${ov_id} before delete -- refusing"
+            gs::info "${ov_prefix}: snapshot saved for overlay #${ov_id}"
+        else
+            gs::warn "${ov_prefix}: no --rollback-dir; deleting overlay #${ov_id} WITHOUT a snapshot"
+        fi
+        if gs::is_dry_run; then
+            gs::info "DRY-RUN: would DELETE ${EXTRAS_NAME} #${ov_id} on ${ov_prefix}"
+        else
+            gh api -X DELETE "repos/${ov_prefix}/rulesets/${ov_id}" >/dev/null \
+                || gs::die "${ov_prefix}: DELETE of overlay #${ov_id} failed"
+            gs::info "${ov_prefix}: ${EXTRAS_NAME} #${ov_id} REMOVED"
+        fi
+        exit 0
+    fi
+
+    # --overlay (on)
+    [[ -r "${EXTRAS_RULESET}" ]] || gs::die "extras ruleset not readable: ${EXTRAS_RULESET}"
+    ov_payload="$(jq -c --arg n "${EXTRAS_NAME}" \
+        '{name: $n, target: "branch", enforcement: "active",
+          conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}},
+          bypass_actors: (.bypass_actors // []),
+          rules: .rules}' "${EXTRAS_RULESET}")"
+    if [[ -n "${ov_id}" && -n "${ROLLBACK_DIR}" ]]; then
+        mkdir -p "${ROLLBACK_DIR}"
+        gh api "repos/${ov_prefix}/rulesets/${ov_id}" \
+            > "${ROLLBACK_DIR}/${ov_owner}-${ov_repo}-${ov_id}.json" 2>/dev/null || true
+    fi
+    if gs::is_dry_run; then
+        gs::info "DRY-RUN: would $( [[ -n "${ov_id}" ]] && echo "UPDATE #${ov_id}" || echo CREATE ) ${EXTRAS_NAME} on ${ov_prefix} ($(jq -r '[.rules[].type]|join(",")' "${EXTRAS_RULESET}"))"
+        exit 0
+    fi
+    if [[ -n "${ov_id}" ]]; then
+        printf '%s' "${ov_payload}" | gh api -X PUT "repos/${ov_prefix}/rulesets/${ov_id}" --input - >/dev/null \
+            || gs::die "${ov_prefix}: PUT of overlay #${ov_id} failed"
+        gs::info "${ov_prefix}: ${EXTRAS_NAME} #${ov_id} UPDATED"
+    else
+        printf '%s' "${ov_payload}" | gh api -X POST "repos/${ov_prefix}/rulesets" --input - >/dev/null \
+            || gs::die "${ov_prefix}: POST of overlay failed"
+        gs::info "${ov_prefix}: ${EXTRAS_NAME} CREATED"
+    fi
+    exit 0
+fi
+
 if ! gs::is_dry_run; then
-    gs::confirm "About to apply '${RULESET_NAME}' ruleset to up to ${LIMIT} ${OWNER} repos. Proceed?" \
+    # ${REPOS_FILE:-...} expands to REPOS_FILE ITSELF when it is set, so the
+    # prompt printed the path twice, concatenated. Compute the phrase first.
+    target_desc=""
+    if [[ -n "${REPOS_FILE}" ]]; then
+        target_desc="the targets in ${REPOS_FILE}"
+    else
+        target_desc="up to ${LIMIT} ${OWNER} repos"
+    fi
+    gs::confirm "About to apply the canon at ${CANON_RULESET} to ${target_desc}. Proceed?" \
         || gs::die "aborted by user"
 fi
 
@@ -85,54 +232,306 @@ fi
 # -----------------------------------------------------------------------------
 
 build_payload() {
-    # $1 = the repo's EXISTING required_status_checks array (JSON). Preserved so
-    # this standardiser repairs the invariant baseline WITHOUT clobbering the
-    # per-repo status checks a repo has legitimately added (e.g. rust/coverage).
+    # $1 = the repo's EXISTING required_status_checks array (JSON)
+    # $2 = the repo's EXISTING bypass_actors array (JSON)
+    # Both are PRESERVED: this standardiser repairs the invariant baseline (the
+    # rules) without clobbering per-repo status checks or bypass configuration.
     #
-    # Deliberately NOT included here:
-    #   - bypass_actors Integration entries + admin "always": re-adding those
-    #     reverts the 2026-06-29 bypass-actor security remediation. Admin keeps a
-    #     "pull_request" bypass only.
-    #   - a code_scanning rule: GitHub's code-scanning merge-protection is flaky
-    #     (perpetually "expects results", deadlocking PRs). CodeQL is enforced via
-    #     a required_status_check instead, preserved per-repo above.
-    local existing_checks="${1:-[]}"
-    cat <<JSON
-{
-  "name": "Base",
-  "target": "branch",
-  "enforcement": "active",
-  "bypass_actors": [
-    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
-  ],
-  "conditions": {
-    "ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}
-  },
-  "rules": [
-    {"type": "deletion"},
-    {"type": "non_fast_forward"},
-    {"type": "required_linear_history"},
-    {"type": "required_signatures"},
-    {"type": "required_deployments",
-     "parameters": {"required_deployment_environments": []}},
-    {"type": "required_status_checks",
-     "parameters": {"strict_required_status_checks_policy": false,
-                    "do_not_enforce_on_create": true,
-                    "required_status_checks": ${existing_checks}}}
-  ]
-}
-JSON
+    # The rule set itself is READ FROM THE CANON (standards/config/rulesets/base.json),
+    # never hardcoded here. The previous inline payload had drifted from the canon
+    # and OMITTED the "pull_request" rule entirely, so applying it stripped PR
+    # enforcement from every repo it touched. Do not reintroduce an inline payload.
+    #
+    # TWO measured reasons the canon is NOT sent verbatim (both are hard 422s,
+    # proven on hyperpolymath/tropical-types 2026-09-09):
+    #
+    #  1. bypass_actors. The canon lists integrations (15368 GitHub Actions among
+    #     them) that are not installed on every target:
+    #       "Actor GitHub Actions integration must be part of the ruleset source
+    #        or owner organization"
+    #     Rewriting bypass actors is also a security-relevant change that the
+    #     rollout was never asked to make, so the repo's own list is preserved.
+    #
+    #  2. required_status_checks. The canon carries an explicitly EMPTY list, and
+    #     GitHub refuses it outright:
+    #       "Invalid parameter required_status_checks: Expected at least 1
+    #        elements, got 0"
+    #     An empty rule would be a fake gate in any case, so when there is
+    #     nothing to require the rule is DROPPED and the repo reported UNGATED
+    #     -- which is what the rollout spec asked for.
+    local existing_checks="${1:-[]}" existing_bypass="${2:-[]}"
+    [[ -z "${existing_checks}" || "${existing_checks}" == "null" ]] && existing_checks='[]'
+    [[ -z "${existing_bypass}" || "${existing_bypass}" == "null" ]] && existing_bypass='[]'
+
+    jq -n \
+        --slurpfile canon "${CANON_RULESET}" \
+        --argjson checks "${existing_checks}" \
+        --argjson bypass "${existing_bypass}" '
+        $canon[0]
+        | .bypass_actors = $bypass
+        # keep every canonical rule; only splice the preserved contexts into
+        # required_status_checks. Rules absent from the canon stay absent.
+        | .rules = ( .rules
+            | map( if .type == "required_status_checks"
+                   then .parameters.required_status_checks = $checks
+                   else . end )
+            | map( select( .type != "required_status_checks"
+                           or ( $checks | length ) > 0 ) )
+          )
+    '
 }
 
 # -----------------------------------------------------------------------------
 # Per-repo apply with retry-on-transient.
 # -----------------------------------------------------------------------------
 
+# Distinguishes the four ways apply_one can succeed. "applied" conflated a real
+# write with a no-op, so a 120-repo run would report applied=120 having changed
+# nothing. Set at EVERY return-0 site.
+LAST_OUTCOME=""
+declare -i UNGATED=0
+declare -i UNGATED_CONTEXT=0
+declare -i WITNESS_UNAVAILABLE=0
+declare -i MERGE_METHOD_REFUSED=0
+
+# -----------------------------------------------------------------------------
+# CONTEXT-WITNESS GATE
+# -----------------------------------------------------------------------------
+# A required status check that NEVER REPORTS blocks a PR permanently, at
+# "Expected -- waiting for status", with ZERO red checks to point at. It is
+# indistinguishable from a red at a glance, and it is the single defect this
+# rollout must not reproduce or carry forward.
+#
+# MEASURED 2026-09-14, three repos, same shape every time:
+#   hypatia         3 CodeQL contexts required, never reported across #775-#779;
+#                   PRs #781/#782 were 14/14 pass and still BLOCKED.
+#   proof-burrower  #76 requires 12, 42 check runs reported, 3 never:
+#                   "Burrower proof safety", "rust-ci / llvm-cov line coverage",
+#                   "Build Ddraig Pages artifact".
+#   gitbot-fleet    #532 requires 11, 34 reported, 3 never:
+#                   "CodeRabbit", "Dispatch path and outcome contracts",
+#                   "GSBot build, tests and dependency security".
+#
+# This script PRESERVES each repo's existing required checks so the standardiser
+# is additive. Without this filter it would faithfully carry every dead context
+# forward into the new ruleset. Preservation is correct; preserving a context
+# nobody emits is not.
+#
+# A context is kept only if it has ACTUALLY REPORTED on a recent head of this
+# repo. The existence of a workflow file is NOT evidence -- hypatia ships
+# codeql.yml and its contexts have never arrived.
+#
+# Two unrelated causes produce a never-reporting context and they need different
+# fixes, so the report must say which (measured: 243 of 391 non-archived repos
+# sit at allowed_actions=selected with patterns_allowed=[], which kills runs at
+# startup with jobs.total_count==0 and NO check run emitted at all):
+#   (a) the ruleset requires a context nobody emits;
+#   (b) the repo's Actions settings prevent any context being emitted.
+# Either way the context is not written; only the diagnosis differs.
+#
+# FAIL-SAFE: if the witness cannot be established (no head, API failure, or a
+# completely empty check-run set) the checks are PRESERVED UNFILTERED and the
+# repo is reported WITNESS-UNAVAILABLE. Dropping a real gate because we could
+# not look is a far worse error than carrying a dead one, so SILENCE NEVER
+# SUBTRACTS.
+#
+# Returns its result in the global WITNESS_OUT rather than on stdout: called in
+# a command substitution the whole body would run in a SUBSHELL, and every
+# counter it incremented -- UNGATED_CONTEXT, WITNESS_UNAVAILABLE, and common.sh's
+# own GS_WARN_COUNT -- would be discarded at the closing paren, so the run
+# summary would report 0 drops however many it made.
+WITNESS_OUT='[]'
+witness_filter_checks() {
+    local owner="$1" repo_name="$2" checks_json="$3" prefix="$4"
+    local sha reported kept dropped n_req n_kept
+    WITNESS_OUT="${checks_json}"
+
+    n_req="$(printf '%s' "${checks_json}" | jq 'length' 2>/dev/null || echo 0)"
+    [[ "${n_req}" =~ ^[0-9]+$ ]] || n_req=0
+    (( n_req == 0 )) && return 0
+
+    # Most recent open PR head, else the default branch tip.
+    sha="$(gh pr list -R "${owner}/${repo_name}" --state open --limit 1 \
+             --json headRefOid --jq '.[0].headRefOid // empty' 2>/dev/null || true)"
+    [[ -z "${sha}" || "${sha}" == "null" ]] \
+        && sha="$(gh api "repos/${owner}/${repo_name}/commits?per_page=1" \
+                    --jq '.[0].sha // empty' 2>/dev/null || true)"
+    if [[ -z "${sha}" || "${sha}" == "null" ]]; then
+        gs::warn "${prefix}: WITNESS-UNAVAILABLE (no head to observe) -- preserving all ${n_req} checks unfiltered"
+        (( WITNESS_UNAVAILABLE++ )) || true
+        return 0
+    fi
+
+    reported="$(gh api "repos/${owner}/${repo_name}/commits/${sha}/check-runs" --paginate \
+                  --jq '[.check_runs[].name]' 2>/dev/null || true)"
+    # `gh api` prints the response BODY on an error, so a non-empty string is
+    # not evidence of success -- require a JSON array before trusting it.
+    if ! printf '%s' "${reported}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        gs::warn "${prefix}: WITNESS-UNAVAILABLE (check-runs unreadable at ${sha:0:8}) -- preserving all ${n_req} checks unfiltered"
+        (( WITNESS_UNAVAILABLE++ )) || true
+        return 0
+    fi
+    # `--paginate` concatenates one array PER PAGE, so two pages yield
+    # `[...]\n[...]`, which is not one array. Flatten before use.
+    reported="$(printf '%s' "${reported}" | jq -cs 'add // []' 2>/dev/null || echo '[]')"
+    # An empty reported set means nothing ran AT ALL -- cause (b), a settings-
+    # level kill -- not evidence that every gate is dead. Never subtract on it.
+    if [[ "$(printf '%s' "${reported}" | jq 'length')" == "0" ]]; then
+        gs::warn "${prefix}: WITNESS-EMPTY at ${sha:0:8} -- NO check runs reported at all; probable startup kill (check actions/permissions), preserving all ${n_req} checks unfiltered"
+        (( WITNESS_UNAVAILABLE++ )) || true
+        return 0
+    fi
+
+    kept="$(jq -cn --argjson c "${checks_json}" --argjson r "${reported}" \
+              '[ $c[] | select( .context as $x | $r | index($x) ) ]' 2>/dev/null || true)"
+    printf '%s' "${kept}" | jq -e 'type == "array"' >/dev/null 2>&1 || {
+        gs::warn "${prefix}: WITNESS-UNAVAILABLE (filter failed) -- preserving all ${n_req} checks unfiltered"
+        (( WITNESS_UNAVAILABLE++ )) || true
+        return 0
+    }
+    dropped="$(jq -rn --argjson c "${checks_json}" --argjson r "${reported}" \
+              '[ $c[] | select( .context as $x | ($r | index($x)) | not ) | .context ] | join(", ")' 2>/dev/null || true)"
+    n_kept="$(printf '%s' "${kept}" | jq 'length')"
+
+    if [[ -n "${dropped}" ]]; then
+        gs::warn "${prefix}: UNGATED-CONTEXT -- dropping ${dropped} (required but never reported at ${sha:0:8}; ${n_kept}/${n_req} witnessed)"
+        (( UNGATED_CONTEXT++ )) || true
+    fi
+    WITNESS_OUT="${kept}"
+    return 0
+}
+
 apply_one() {
     local repo_name="$1" default_branch="$2" prefix="$3"
-    local existing_id
-    existing_id="$(gh api "repos/${OWNER}/${repo_name}/rulesets" \
-        --jq ".[] | select(.name == \"${RULESET_NAME}\") | .id" 2>/dev/null || true)"
+    # Owner is PER ROW. The estate spans two orgs (102 hyperpolymath + 18
+    # metadatastician in the 2026-09-09 target set); a single global OWNER
+    # silently skipped every metadatastician target. This local shadows it.
+    local OWNER="${4:-${OWNER}}"
+    LAST_OUTCOME=""
+
+    # ---- MERGE-METHOD PREFLIGHT -------------------------------------------
+    # The canon pins `allowed_merge_methods` (today: ["squash"]). A ruleset can
+    # only NARROW what the repo SETTINGS already permit -- it cannot re-enable a
+    # method the repo has switched off. So if the repo has `allow_squash_merge:
+    # false` and the ruleset says squash-only, the intersection is EMPTY and the
+    # repo has NO legal merge method at all: permanently unmergeable, the same
+    # trap family as the zero-bypass canon this rollout exists to remove.
+    #
+    # REFUSE rather than silently widening the method set. Writing a wider set
+    # than canon would make this repo quietly non-canonical; flipping the repo
+    # setting would be an unattended settings change, which is forbidden. The
+    # right output is a NAME ON A LIST for the owner.
+    #
+    # Derived from the canon, not hardcoded to "squash", so amending base.json
+    # cannot leave this check testing the wrong thing -- the recurring
+    # "a guard asks a different question than its consumer" defect.
+    local want_methods
+    want_methods="$(jq -r '[.rules[]? | select(.type=="pull_request")
+                            | .parameters.allowed_merge_methods // empty] | add // []
+                           | join(" ")' "${CANON_RULESET}" 2>/dev/null || true)"
+    if [[ -n "${want_methods}" ]]; then
+        local repo_settings legal="" m setting
+        repo_settings="$(gh api "repos/${OWNER}/${repo_name}" \
+            --jq '{merge:.allow_merge_commit, squash:.allow_squash_merge, rebase:.allow_rebase_merge}' 2>/dev/null || true)"
+        if printf '%s' "${repo_settings}" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            for m in ${want_methods}; do
+                case "${m}" in
+                    merge)  setting=merge  ;;
+                    squash) setting=squash ;;
+                    rebase) setting=rebase ;;
+                    *)      continue      ;;
+                esac
+                if [[ "$(printf '%s' "${repo_settings}" | jq -r ".${setting}")" == "true" ]]; then
+                    legal="${legal} ${m}"
+                fi
+            done
+            if [[ -z "${legal// /}" ]]; then
+                if [[ "${want_methods}" == "squash" ]]; then
+                    gs::error "${prefix}: SQUASH-DISABLED -- canon requires squash-only but allow_squash_merge=false; writing it would leave NO legal merge method -- refusing"
+                else
+                    gs::error "${prefix}: MERGE-METHOD-IMPOSSIBLE -- canon allows [${want_methods}] but the repo enables none of them -- refusing"
+                fi
+                (( MERGE_METHOD_REFUSED++ )) || true
+                return 1
+            fi
+        else
+            # Could not read the settings: do not guess. Refusing here is the
+            # fail-safe -- a write made blind is the one that cannot be undone
+            # by re-running, because the repo may already be unmergeable.
+            gs::error "${prefix}: MERGE-METHOD-UNKNOWN -- cannot read repo merge settings -- refusing"
+            (( MERGE_METHOD_REFUSED++ )) || true
+            return 1
+        fi
+    fi
+    # -----------------------------------------------------------------------
+    # Identity is the TARGET, never the name (standards/config/README.adoc).
+    # Live waves are variously named Base, Backup, Pages-fix, Optimus-Branch,
+    # default-branch-protection. Selecting by name made this script POST a
+    # SECOND active ruleset onto every repo whose ruleset was named anything
+    # else -- leaving the old one in force and double-gating the repo. The
+    # canon: exactly one active branch ruleset including exactly
+    # ["~DEFAULT_BRANCH"]; zero means CREATE, two or more is a verifier failure.
+    #
+    # This MUST be two-step. The rulesets LIST endpoint returns a summary that
+    # omits `conditions`, `rules` and `bypass_actors` entirely, so filtering the
+    # list on .conditions matches NOTHING -- measured 0 of 178 live repos on
+    # 2026-09-09 -- which silently turns every PUT into a POST and recreates the
+    # exact duplicate-ruleset bug this selector exists to prevent. Only
+    # GET .../rulesets/{id} carries the shape.
+    local pin_id="${5:-}"
+    local cand_ids id rs_json ids='' id_count existing_id existing_full=''
+    # PINNED-ID MODE. The doubles (8 repos on 2026-09-09) legitimately run two
+    # active ~DEFAULT_BRANCH rulesets: the Optimus-Branch wave AND a newer
+    # purpose-built one. Refusing them wholesale is right by default -- but when
+    # the owner rules that only the Optimus one is to be replaced, the identity
+    # test cannot pick it out. Field 2 of the repos file names the id to write.
+    # It still must be active, branch-targeted and exactly ~DEFAULT_BRANCH: a
+    # pinned id is a tie-break among valid candidates, never a way past the test.
+    if [[ -n "${pin_id}" ]]; then
+        rs_json="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${pin_id}" 2>/dev/null || true)"
+        # `gh api` PRINTS THE RESPONSE BODY ON A 404, so a non-existent ruleset
+        # yields a NON-EMPTY string and sails past an emptiness check. That is
+        # why D11's 120 refusals all read "is not an active ~DEFAULT_BRANCH
+        # branch ruleset" -- the true cause was "no such ruleset". Assert the
+        # object actually IS a ruleset (it carries a numeric .id) before judging
+        # its shape, and report a 404 as a 404.
+        printf '%s' "${rs_json}" | jq -e 'type == "object" and (.id | type == "number")' >/dev/null 2>&1 \
+            || { gs::error "${prefix}: pinned ruleset #${pin_id} does not exist on this repo ($(printf '%s' "${rs_json}" | jq -r '.message // "no response"' 2>/dev/null)) -- refusing"; return 1; }
+        printf '%s' "${rs_json}" | jq -e '.enforcement == "active" and .target == "branch" and ((.conditions.ref_name.include // []) == ["~DEFAULT_BRANCH"])' >/dev/null 2>&1 \
+            || { gs::error "${prefix}: pinned ruleset #${pin_id} is not an active ~DEFAULT_BRANCH branch ruleset -- refusing"; return 1; }
+        ids="${pin_id}"$'\n'
+        existing_full="${rs_json}"
+        gs::info "${prefix}: pinned to ruleset #${pin_id} ($(printf '%s' "${rs_json}" | jq -r .name)) -- other active rulesets on this repo are left in force"
+    else
+        cand_ids="$(gh api "repos/${OWNER}/${repo_name}/rulesets" \
+            --jq '.[] | select(.enforcement == "active" and .target == "branch") | .id' 2>/dev/null || true)"
+        for id in ${cand_ids}; do
+            rs_json="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${id}" 2>/dev/null || true)"
+            [[ -z "${rs_json}" ]] && continue
+            if printf '%s' "${rs_json}" \
+                | jq -e '(.conditions.ref_name.include // []) == ["~DEFAULT_BRANCH"]' >/dev/null 2>&1; then
+                ids="${ids}${id}"$'\n'
+                existing_full="${rs_json}"
+            fi
+        done
+    fi
+
+    id_count="$(printf '%s' "${ids}" | /usr/bin/grep -c . || true)"
+
+    if (( id_count > 1 )); then
+        gs::error "${prefix}: ${id_count} active ~DEFAULT_BRANCH rulesets ($(printf '%s' "${ids}" | tr '\n' ' ')) -- refusing; the canon requires exactly one"
+        return 1
+    fi
+    existing_id="$(printf '%s' "${ids}" | head -n1)"
+
+    # Rollback BEFORE any write, from the object already fetched. Saved on dry
+    # runs too -- it is a read, and having it costs nothing.
+    if [[ -n "${existing_id}" && -n "${ROLLBACK_DIR}" ]]; then
+        mkdir -p "${ROLLBACK_DIR}" || gs::die "cannot create rollback dir ${ROLLBACK_DIR}"
+        printf '%s\n' "${existing_full}" \
+            > "${ROLLBACK_DIR}/${OWNER}-${repo_name}-${existing_id}.json" \
+            || gs::die "${prefix}: cannot write rollback -- refusing to proceed"
+    fi
 
     local method url verb_msg
     if [[ -n "${existing_id}" ]]; then
@@ -140,32 +539,101 @@ apply_one() {
         url="repos/${OWNER}/${repo_name}/rulesets/${existing_id}"
         verb_msg="UPDATE existing #${existing_id}"
     else
+        if (( NO_CREATE )); then
+            gs::info "${prefix}: no active ~DEFAULT_BRANCH ruleset and --no-create is set -- skipping (creating one would ADD protection this repo never had)"
+            LAST_OUTCOME="skipped-no-create"
+            return 0
+        fi
         method=POST
         url="repos/${OWNER}/${repo_name}/rulesets"
         verb_msg="CREATE"
     fi
 
-    if gs::is_dry_run; then
-        gs::info "${prefix}: WOULD ${verb_msg} (${default_branch})"
-        return 0
-    fi
-
     # Read the repo's own required status checks so the standardiser is additive
     # (repairs the baseline rules) rather than wiping per-repo gates on the PUT.
+    # Taken from the by-id JSON fetched above: the LIST summary has no `rules`
+    # key at all, so re-reading the list here would silently yield [] and wipe
+    # every per-repo gate in the estate.
     local existing_checks='[]'
-    if [[ -n "${existing_id}" ]]; then
-        existing_checks="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${existing_id}" \
-            --jq '([.rules[]? | select(.type=="required_status_checks") | .parameters.required_status_checks] | add) // []' 2>/dev/null || echo '[]')"
+    if [[ -n "${existing_full}" ]]; then
+        existing_checks="$(printf '%s' "${existing_full}" \
+            | jq -c '([.rules[]? | select(.type=="required_status_checks") | .parameters.required_status_checks] | add) // []' 2>/dev/null || echo '[]')"
         [[ -z "${existing_checks}" || "${existing_checks}" == "null" ]] && existing_checks='[]'
     fi
-    local payload; payload="$(build_payload "${existing_checks}")"
-    local attempt
-    for attempt in 1 2; do
-        if gh api "${url}" --method "${method}" --input - <<< "${payload}" >/dev/null 2>&1; then
-            gs::info "${prefix}: ${verb_msg/WOULD /} ok (${default_branch})"
+    # Preserve the repo's own bypass actors (see build_payload note 1: sending
+    # the canon's list 422s where those integrations are not installed).
+    local existing_bypass='[]'
+    if [[ -n "${existing_full}" ]]; then
+        existing_bypass="$(printf '%s' "${existing_full}" \
+            | jq -c '.bypass_actors // []' 2>/dev/null || echo '[]')"
+        [[ -z "${existing_bypass}" || "${existing_bypass}" == "null" ]] && existing_bypass='[]'
+    fi
+    # Filter the preserved set to contexts the repo has ACTUALLY EMITTED. This
+    # sits between "read what exists" and "decide whether the rule is empty", so
+    # a repo whose every required context is dead falls through to the UNGATED
+    # branch below and has the rule OMITTED -- not written empty (GitHub 422s an
+    # empty required_status_checks anyway) and not written dead.
+    witness_filter_checks "${OWNER}" "${repo_name}" "${existing_checks}" "${prefix}"
+    existing_checks="${WITNESS_OUT}"
+    [[ -z "${existing_checks}" || "${existing_checks}" == "null" ]] && existing_checks='[]'
+    if [[ "${existing_checks}" == '[]' ]]; then
+        gs::warn "${prefix}: UNGATED -- no required status checks to preserve; omitting the rule rather than writing an empty one"
+        (( UNGATED++ )) || true
+    fi
+    local payload; payload="$(build_payload "${existing_checks}" "${existing_bypass}")"
+
+    # Compare BEFORE writing. Without this the PUT fires unconditionally on
+    # every run, so "run it twice, the second makes zero writes" could never
+    # hold, and a 120-repo run killed part-way could not be resumed without
+    # re-PUTting everything already done.
+    #
+    # The test is SUBSET, not equality: GitHub echoes back server-side defaults
+    # we never send (measured: a `dismissal_restriction` object inside the
+    # pull_request rule), and a live object also carries id/_links/source/
+    # created_at/updated_at/current_user_can_bypass. Equality therefore NEVER
+    # matches and the script rewrites the same repo forever. If everything we
+    # would send is already present with the same value, the PUT is a no-op.
+    # Arrays compare as sets of the same length, so rule/actor ordering -- which
+    # GitHub does not preserve -- does not cause a spurious rewrite, while a
+    # dropped or added element still does.
+    if [[ -n "${existing_full}" ]]; then
+        local is_same
+        is_same="$(jq -n \
+            --argjson payload "${payload}" \
+            --argjson live "${existing_full}" '
+            def sub($a; $b):
+              if ($a|type) == "object" then
+                ($b|type) == "object"
+                  and ($a | keys_unsorted | all(. as $k | ($b|has($k)) and sub($a[$k]; $b[$k])))
+              elif ($a|type) == "array" then
+                ($b|type) == "array"
+                  and ($a|length) == ($b|length)
+                  and ($a | all(. as $e | $b | any(. as $c | sub($e; $c))))
+              else $a == $b end;
+            sub($payload; $live)' 2>/dev/null || echo 'error')"
+        if [[ "${is_same}" == "true" ]]; then
+            gs::info "${prefix}: already canonical (#${existing_id}) -- no write"
+            LAST_OUTCOME="already-canonical"
             return 0
         fi
-        gs::warn "${prefix}: ${verb_msg} attempt ${attempt} failed; backing off..."
+    fi
+
+    if gs::is_dry_run; then
+        gs::info "${prefix}: WOULD ${verb_msg} (${default_branch})"
+        LAST_OUTCOME="would-write"
+        return 0
+    fi
+    local attempt api_err
+    for attempt in 1 2; do
+        # Capture stderr: swallowing it hid a hard 422 ("Expected at least 1
+        # elements, got 0") behind a bare "attempt failed", which is why the
+        # cause had to be reproduced by hand. Never discard the response body.
+        if api_err="$(gh api "${url}" --method "${method}" --input - <<< "${payload}" 2>&1 >/dev/null)"; then
+            gs::info "${prefix}: ${verb_msg/WOULD /} ok (${default_branch})"
+            LAST_OUTCOME="written"
+            return 0
+        fi
+        gs::warn "${prefix}: ${verb_msg} attempt ${attempt} failed: ${api_err//$'\n'/ }"
         sleep "$(( attempt * GS_GH_RETRY_BASE_S ))"
     done
     gs::error "${prefix}: ${verb_msg} failed after retry"
@@ -176,29 +644,74 @@ apply_one() {
 # Main loop.
 # -----------------------------------------------------------------------------
 
-gs::info "fetching repos (limit ${LIMIT})..."
-mapfile -t REPO_ROWS < <(gh repo list "${OWNER}" \
-    --limit "${LIMIT}" \
-    --json name,defaultBranchRef,isArchived \
-    --jq '.[] | [.name, (.defaultBranchRef.name // "main"), .isArchived] | @tsv')
+# Rows are owner<TAB>name<TAB>default_branch<TAB>archived. The owner is carried
+# PER ROW because the target population spans two orgs; the old single-OWNER
+# `gh repo list` form could not express that and would also have applied to
+# EVERY repo in the org rather than the measured target set.
+declare -a REPO_ROWS=()
+if [[ -n "${REPOS_FILE}" ]]; then
+    [[ -r "${REPOS_FILE}" ]] || gs::die "repos file not readable: ${REPOS_FILE}"
+    gs::info "reading targets from ${REPOS_FILE} (field 1 = owner/repo, optional 'pin:<id>' token pins the ruleset)..."
+    while IFS= read -r line; do
+        # DEFECT D11 (2026-09-14): this block used to read FIELD 2 as the ruleset
+        # id to pin. `rollout-targets.tsv` is five-column -- field 2 is the OPEN
+        # PR COUNT -- so all 120 rows pinned "ruleset #1/#2/#3", every lookup
+        # 404'd, and the run refused 120 of 120. Nothing was written, so the
+        # fail-safe held, but the cause was a POSITIONAL assumption about a file
+        # this script does not own. A bare column can never again be read as an
+        # id: the pin must be an explicit `pin:<digits>` token, in any field.
+        pin=""
+        case "${line}" in
+            *pin:*)
+                pin="${line#*pin:}"
+                pin="${pin%%[!0-9]*}"
+                ;;
+        esac
+        # First field is always owner/repo; every other field is ignored unless
+        # it carried the pin: token above.
+        line="${line%%$(printf '\t')*}"
+        line="${line%%[[:space:]]*}"
+        [[ -z "${line}" || "${line}" == \#* ]] && continue
+        [[ "${line}" == */* ]] || gs::die "repos file line is not owner/repo: ${line}"
+        local_row="$(gh api "repos/${line}" \
+            --jq '[.owner.login, .name, .default_branch, (.archived|tostring)] | @tsv' 2>/dev/null || true)"
+        if [[ -z "${local_row}" ]]; then
+            gs::warn "cannot read repos/${line} -- skipping (not counted as applied)"
+            continue
+        fi
+        REPO_ROWS+=( "${local_row}$(printf '\t')${pin}" )
+    done < "${REPOS_FILE}"
+else
+    gs::info "fetching repos (limit ${LIMIT})..."
+    mapfile -t REPO_ROWS < <(gh repo list "${OWNER}" \
+        --limit "${LIMIT}" \
+        --json owner,name,defaultBranchRef,isArchived \
+        --jq '.[] | [.owner.login, .name, (.defaultBranchRef.name // "main"), (.isArchived|tostring)] | @tsv')
+fi
 
 REPO_COUNT="${#REPO_ROWS[@]}"
 gs::info "found ${REPO_COUNT} repos"
 
-declare -i N=0 SK_ARC=0 OK=0 FAIL=0
+declare -i N=0 SK_ARC=0 OK=0 FAIL=0 WROTE=0 SAME=0 NOCREATE=0 WOULD=0
 
 for row in "${REPO_ROWS[@]}"; do
     (( N++ )) || true
-    IFS=$'\t' read -r repo_name default_branch is_archived <<< "${row}"
-    prefix="[${N}/${REPO_COUNT}] ${repo_name}"
+    IFS=$'\t' read -r row_owner repo_name default_branch is_archived row_pin <<< "${row}"
+    prefix="[${N}/${REPO_COUNT}] ${row_owner}/${repo_name}"
 
     if [[ "${is_archived}" == "true" ]]; then
         gs::debug "${prefix}: skip (archived)"
         (( SK_ARC++ )) || true
         outcome="skipped-archived"
-    elif apply_one "${repo_name}" "${default_branch}" "${prefix}"; then
+    elif apply_one "${repo_name}" "${default_branch}" "${prefix}" "${row_owner}" "${row_pin:-}"; then
         (( OK++ )) || true
-        outcome="ok"
+        outcome="${LAST_OUTCOME:-ok}"
+        case "${LAST_OUTCOME}" in
+            written)            (( WROTE++ ))    || true ;;
+            already-canonical)  (( SAME++ ))     || true ;;
+            skipped-no-create)  (( NOCREATE++ )) || true ;;
+            would-write)        (( WOULD++ ))    || true ;;
+        esac
     else
         (( FAIL++ )) || true
         outcome="failed"
@@ -206,7 +719,7 @@ for row in "${REPO_ROWS[@]}"; do
 
     if [[ -n "${REPORT_FILE}" ]]; then
         gs::report_add "${REPORT_FILE}" \
-            "repo = \"${repo_name}\"" \
+            "repo = \"${row_owner}/${repo_name}\"" \
             "default_branch = \"${default_branch}\"" \
             "outcome = \"${outcome}\""
     fi
@@ -217,8 +730,12 @@ done
 # -----------------------------------------------------------------------------
 
 gs::banner "Summary"
-gs::info "total=${REPO_COUNT}  applied=${OK}  archived=${SK_ARC}  failed=${FAIL}"
+gs::info "total=${REPO_COUNT}  ok=${OK}  archived=${SK_ARC}  failed=${FAIL}"
+# "applied" alone cannot tell a real write from a no-op; a converged run and
+# a run that changed nothing looked identical. Break it out.
+gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}"
 [[ -n "${REPORT_FILE}" ]] && gs::info "report: ${REPORT_FILE}"
 
 (( FAIL > 0 )) && exit 1
 exit 0
+
