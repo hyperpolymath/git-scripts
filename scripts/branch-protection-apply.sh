@@ -341,61 +341,131 @@ declare -i MERGE_METHOD_REFUSED=0
 # own GS_WARN_COUNT -- would be discarded at the closing paren, so the run
 # summary would report 0 drops however many it made.
 WITNESS_OUT='[]'
+WITNESS_PROVENANCE=''
 witness_filter_checks() {
-    local owner="$1" repo_name="$2" checks_json="$3" prefix="$4"
-    local sha reported kept dropped n_req n_kept
+    local owner="$1" repo_name="$2" checks_json="$3" prefix="$4" default_branch="${5:-}"
+    local sha heads cr st union kept dropped n_req n_kept map n_heads n_bad
     WITNESS_OUT="${checks_json}"
+    WITNESS_PROVENANCE=''
 
     n_req="$(printf '%s' "${checks_json}" | jq 'length' 2>/dev/null || echo 0)"
     [[ "${n_req}" =~ ^[0-9]+$ ]] || n_req=0
     (( n_req == 0 )) && return 0
 
-    # Most recent open PR head, else the default branch tip.
-    sha="$(gh pr list -R "${owner}/${repo_name}" --state open --limit 1 \
-             --json headRefOid --jq '.[0].headRefOid // empty' 2>/dev/null || true)"
-    [[ -z "${sha}" || "${sha}" == "null" ]] \
-        && sha="$(gh api "repos/${owner}/${repo_name}/commits?per_page=1" \
-                    --jq '.[0].sha // empty' 2>/dev/null || true)"
-    if [[ -z "${sha}" || "${sha}" == "null" ]]; then
+    # -- HEAD SELECTION ------------------------------------------------------
+    # MEASURED 2026-09-14 on gitbot-fleet: ONE head is not a sample. At
+    # 20f71d68 CodeQL + "governance / Code quality + docs" reported and
+    # CodeRabbit did not; at 63f0868d the exact complement reported. A single
+    # head reflects that PR's path/actor filters (Dependabot especially), not
+    # the repo's gate inventory -- so sample several and UNION.
+    #
+    # Scoped to --base "${default_branch}": the ruleset being written governs
+    # the DEFAULT branch, and an unscoped `gh pr list` handed this gate a PR
+    # targeting a feature branch, which that ruleset does not govern at all.
+    #
+    # MERGED heads come first and are the strongest witness available: a merged
+    # PR proves the ruleset was actually SATISFIED at that sha.
+    heads=''
+    if [[ -n "${default_branch}" ]]; then
+        heads="$(gh pr list -R "${owner}/${repo_name}" --state merged --base "${default_branch}" \
+                   --limit 5 --json headRefOid --jq '.[].headRefOid' 2>/dev/null || true)"
+        heads="${heads}"$'\n'"$(gh pr list -R "${owner}/${repo_name}" --state open --base "${default_branch}" \
+                   --limit 5 --json headRefOid --jq '.[].headRefOid' 2>/dev/null || true)"
+    fi
+    heads="${heads}"$'\n'"$(gh api "repos/${owner}/${repo_name}/commits?sha=${default_branch:-HEAD}&per_page=1" \
+                 --jq '.[0].sha // empty' 2>/dev/null || true)"
+    # Drop blanks, drop anything that is not a sha (gh api prints the 404 BODY),
+    # and de-duplicate while PRESERVING order so merged heads stay first.
+    heads="$(printf '%s\n' "${heads}" | grep -oE '^[0-9a-f]{7,40}$' | awk '!seen[$0]++' || true)"
+
+    if [[ -z "${heads}" ]]; then
         gs::warn "${prefix}: WITNESS-UNAVAILABLE (no head to observe) -- preserving all ${n_req} checks unfiltered"
         (( WITNESS_UNAVAILABLE++ )) || true
         return 0
     fi
 
-    reported="$(gh api "repos/${owner}/${repo_name}/commits/${sha}/check-runs" --paginate \
-                  --jq '[.check_runs[].name]' 2>/dev/null || true)"
-    # `gh api` prints the response BODY on an error, so a non-empty string is
-    # not evidence of success -- require a JSON array before trusting it.
-    if ! printf '%s' "${reported}" | jq -e 'type == "array"' >/dev/null 2>&1; then
-        gs::warn "${prefix}: WITNESS-UNAVAILABLE (check-runs unreadable at ${sha:0:8}) -- preserving all ${n_req} checks unfiltered"
+    # -- OBSERVATION ---------------------------------------------------------
+    # A required context is satisfied by a check RUN *or* a legacy commit
+    # STATUS, and the two APIs do not overlap. MEASURED on gitbot-fleet
+    # @20f71d68: 34 check-runs, and `CodeRabbit` present ONLY in
+    # /commits/{sha}/status. Reading just the Checks API would have stripped
+    # CodeRabbit from the canon on every repo that requires it -- the gate
+    # silently rewriting policy. `statusCheckRollup` is the union of both,
+    # which is why its jq needs `.name // .context`. UNION, never one endpoint.
+    map='{}'
+    n_heads=0
+    n_bad=0
+    while IFS= read -r sha; do
+        [[ -n "${sha}" ]] || continue
+        cr="$(gh api "repos/${owner}/${repo_name}/commits/${sha}/check-runs" --paginate \
+                --jq '[.check_runs[].name]' 2>/dev/null || true)"
+        # `gh api` prints the response BODY on an error, so a non-empty string
+        # is not evidence of success -- require a JSON array before trusting it.
+        printf '%s' "${cr}" | jq -e 'type == "array"' >/dev/null 2>&1 || cr=''
+        # `--paginate` concatenates one array PER PAGE: `[...]\n[...]` is not
+        # one array. Flatten before use.
+        [[ -n "${cr}" ]] && cr="$(printf '%s' "${cr}" | jq -cs 'add // []' 2>/dev/null || echo '')"
+        st="$(gh api "repos/${owner}/${repo_name}/commits/${sha}/status" \
+                --jq '[.statuses[].context]' 2>/dev/null || true)"
+        printf '%s' "${st}" | jq -e 'type == "array"' >/dev/null 2>&1 || st=''
+        if [[ -z "${cr}" && -z "${st}" ]]; then
+            (( n_bad++ )) || true
+            continue
+        fi
+        (( n_heads++ )) || true
+        union="$(jq -cn --argjson a "${cr:-[]}" --argjson b "${st:-[]}" '$a + $b | unique' 2>/dev/null || echo '[]')"
+        # First witness wins, so provenance names the STRONGEST head (merged
+        # before open before branch tip) that actually reported the context.
+        #
+        # Object "+" in jq is RIGHT-biased, so (new + $m) keeps whatever $m
+        # already holds for a duplicate key -- that IS first-witness-wins, in
+        # one operator. Do NOT express it as
+        #     with_entries( select( ($m | has(.key)) | not ) )
+        # because inside that pipe "." is $m, so ".key" reads $m's own .key
+        # (null) rather than the entry's key: the select matches NOTHING and
+        # the map stays permanently empty, which reads downstream as
+        # WITNESS-EMPTY on every repo. Measured: all filtering cases returned
+        # unfiltered until this line was changed.
+        map="$(jq -cn --argjson m "${map}" --argjson u "${union}" --arg h "${sha}" \
+                 '( $u | map({key: ., value: $h}) | from_entries ) + $m' \
+                 2>/dev/null || printf '%s' "${map}")"
+    done <<< "${heads}"
+
+    if (( n_heads == 0 )); then
+        gs::warn "${prefix}: WITNESS-UNAVAILABLE (checks unreadable at all ${n_bad} candidate heads) -- preserving all ${n_req} checks unfiltered"
         (( WITNESS_UNAVAILABLE++ )) || true
         return 0
     fi
-    # `--paginate` concatenates one array PER PAGE, so two pages yield
-    # `[...]\n[...]`, which is not one array. Flatten before use.
-    reported="$(printf '%s' "${reported}" | jq -cs 'add // []' 2>/dev/null || echo '[]')"
-    # An empty reported set means nothing ran AT ALL -- cause (b), a settings-
-    # level kill -- not evidence that every gate is dead. Never subtract on it.
-    if [[ "$(printf '%s' "${reported}" | jq 'length')" == "0" ]]; then
-        gs::warn "${prefix}: WITNESS-EMPTY at ${sha:0:8} -- NO check runs reported at all; probable startup kill (check actions/permissions), preserving all ${n_req} checks unfiltered"
+    # An empty observed set means nothing ran AT ALL across every head -- cause
+    # (b), a settings-level startup kill -- not evidence that every gate is
+    # dead. Never subtract on it.
+    if [[ "$(printf '%s' "${map}" | jq 'length' 2>/dev/null || echo 0)" == "0" ]]; then
+        gs::warn "${prefix}: WITNESS-EMPTY across ${n_heads} head(s) -- NO check runs or statuses reported at all; probable startup kill (check actions/permissions), preserving all ${n_req} checks unfiltered"
         (( WITNESS_UNAVAILABLE++ )) || true
         return 0
     fi
 
-    kept="$(jq -cn --argjson c "${checks_json}" --argjson r "${reported}" \
-              '[ $c[] | select( .context as $x | $r | index($x) ) ]' 2>/dev/null || true)"
+    kept="$(jq -cn --argjson c "${checks_json}" --argjson m "${map}" \
+              '[ $c[] | select( .context as $x | $m | has($x) ) ]' 2>/dev/null || true)"
     printf '%s' "${kept}" | jq -e 'type == "array"' >/dev/null 2>&1 || {
         gs::warn "${prefix}: WITNESS-UNAVAILABLE (filter failed) -- preserving all ${n_req} checks unfiltered"
         (( WITNESS_UNAVAILABLE++ )) || true
         return 0
     }
-    dropped="$(jq -rn --argjson c "${checks_json}" --argjson r "${reported}" \
-              '[ $c[] | select( .context as $x | ($r | index($x)) | not ) | .context ] | join(", ")' 2>/dev/null || true)"
+    dropped="$(jq -rn --argjson c "${checks_json}" --argjson m "${map}" \
+              '[ $c[] | select( .context as $x | ($m | has($x)) | not ) | .context ] | join(", ")' 2>/dev/null || true)"
     n_kept="$(printf '%s' "${kept}" | jq 'length')"
+    # Provenance: R12 requires the repair issue to cite WHICH head witnessed
+    # each surviving context, so a reader can re-observe the same evidence.
+    WITNESS_PROVENANCE="$(jq -rn --argjson c "${checks_json}" --argjson m "${map}" \
+              '[ $c[] | .context as $x | select( $m | has($x) ) | "\($x)@\($m[$x][0:8])" ] | join(", ")' 2>/dev/null || true)"
 
     if [[ -n "${dropped}" ]]; then
-        gs::warn "${prefix}: UNGATED-CONTEXT -- dropping ${dropped} (required but never reported at ${sha:0:8}; ${n_kept}/${n_req} witnessed)"
+        gs::warn "${prefix}: UNGATED-CONTEXT -- dropping ${dropped} (required but never reported across ${n_heads} default-branch head(s), check-runs AND statuses; ${n_kept}/${n_req} witnessed)"
         (( UNGATED_CONTEXT++ )) || true
+    fi
+    if [[ -n "${WITNESS_PROVENANCE}" ]]; then
+        gs::info "${prefix}: witnessed ${n_kept}/${n_req} over ${n_heads} head(s) -- ${WITNESS_PROVENANCE}"
     fi
     WITNESS_OUT="${kept}"
     return 0
@@ -573,7 +643,7 @@ apply_one() {
     # a repo whose every required context is dead falls through to the UNGATED
     # branch below and has the rule OMITTED -- not written empty (GitHub 422s an
     # empty required_status_checks anyway) and not written dead.
-    witness_filter_checks "${OWNER}" "${repo_name}" "${existing_checks}" "${prefix}"
+    witness_filter_checks "${OWNER}" "${repo_name}" "${existing_checks}" "${prefix}" "${default_branch}"
     existing_checks="${WITNESS_OUT}"
     [[ -z "${existing_checks}" || "${existing_checks}" == "null" ]] && existing_checks='[]'
     if [[ "${existing_checks}" == '[]' ]]; then
