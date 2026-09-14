@@ -352,7 +352,8 @@ WITNESS_PROVENANCE=''
 # can be read or the observed set is empty, preserves the input checks and returns success.
 witness_filter_checks() {
     local owner="$1" repo_name="$2" checks_json="$3" prefix="$4" default_branch="${5:-}"
-    local sha heads cr st union kept dropped n_req n_kept map n_heads n_bad
+    local sha heads cr st union kept dropped n_req n_kept map n_heads n_bad n_check_run_heads
+    local cr_readable st_readable
     WITNESS_OUT="${checks_json}"
     WITNESS_PROVENANCE=''
 
@@ -403,24 +404,43 @@ witness_filter_checks() {
     map='{}'
     n_heads=0
     n_bad=0
+    n_check_run_heads=0
     while IFS= read -r sha; do
         [[ -n "${sha}" ]] || continue
         cr="$(gh api "repos/${owner}/${repo_name}/commits/${sha}/check-runs" --paginate \
                 --jq '[.check_runs[].name]' 2>/dev/null || true)"
         # `gh api` prints the response BODY on an error, so a non-empty string
         # is not evidence of success -- require a JSON array before trusting it.
-        printf '%s' "${cr}" | jq -e 'type == "array"' >/dev/null 2>&1 || cr=''
-        # `--paginate` concatenates one array PER PAGE: `[...]\n[...]` is not
-        # one array. Flatten before use.
-        [[ -n "${cr}" ]] && cr="$(printf '%s' "${cr}" | jq -cs 'add // []' 2>/dev/null || echo '')"
+        cr_readable=0
+        if [[ -n "${cr}" ]] && printf '%s' "${cr}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            # `--paginate` concatenates one array PER PAGE: `[...]\n[...]` is not
+            # one array. Flatten before use; a flattening failure is unreadable.
+            if cr="$(printf '%s' "${cr}" | jq -cs 'add // []' 2>/dev/null)"; then
+                cr_readable=1
+            else
+                cr=''
+            fi
+        else
+            cr=''
+        fi
         st="$(gh api "repos/${owner}/${repo_name}/commits/${sha}/status" \
                 --jq '[.statuses[].context]' 2>/dev/null || true)"
-        printf '%s' "${st}" | jq -e 'type == "array"' >/dev/null 2>&1 || st=''
-        if [[ -z "${cr}" && -z "${st}" ]]; then
+        st_readable=0
+        if [[ -n "${st}" ]] && printf '%s' "${st}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            st_readable=1
+        else
+            st=''
+        fi
+        # Legacy statuses can supplement check-run evidence, but cannot make a
+        # missing or unreadable Checks API response look complete.
+        if (( ! cr_readable || ! st_readable )); then
             (( n_bad++ )) || true
             continue
         fi
         (( n_heads++ )) || true
+        if [[ "$(printf '%s' "${cr}" | jq 'length' 2>/dev/null || echo 0)" != "0" ]]; then
+            (( n_check_run_heads++ )) || true
+        fi
         union="$(jq -cn --argjson a "${cr:-[]}" --argjson b "${st:-[]}" '$a + $b | unique' 2>/dev/null || echo '[]')"
         # First witness wins, so provenance names the STRONGEST head (merged
         # before open before branch tip) that actually reported the context.
@@ -444,11 +464,11 @@ witness_filter_checks() {
         (( WITNESS_UNAVAILABLE++ )) || true
         return 0
     fi
-    # An empty observed set means nothing ran AT ALL across every head -- cause
-    # (b), a settings-level startup kill -- not evidence that every gate is
-    # dead. Never subtract on it.
-    if [[ "$(printf '%s' "${map}" | jq 'length' 2>/dev/null || echo 0)" == "0" ]]; then
-        gs::warn "${prefix}: WITNESS-EMPTY across ${n_heads} head(s) -- NO check runs or statuses reported at all; probable startup kill (check actions/permissions), preserving all ${n_req} checks unfiltered"
+    # Statuses alone do not establish that checks can run. If none of the fully
+    # readable heads reported a check run, this may be a settings-level startup
+    # kill rather than evidence that every required gate is dead. Never subtract.
+    if (( n_check_run_heads == 0 )); then
+        gs::warn "${prefix}: WITNESS-EMPTY across ${n_heads} head(s) -- NO check runs reported; probable startup kill (check actions/permissions), preserving all ${n_req} checks unfiltered"
         (( WITNESS_UNAVAILABLE++ )) || true
         return 0
     fi
@@ -822,4 +842,3 @@ gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  s
 
 (( FAIL > 0 )) && exit 1
 exit 0
-
