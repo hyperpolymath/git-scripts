@@ -16,7 +16,33 @@
 
 set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-. "${SCRIPT_DIR}/lib/common.sh"
+# A FAILED SOURCE MUST NOT BE SURVIVABLE. This file runs under `set -uo pipefail`
+# with NO `-e`, so a `.` that cannot find its library merely prints an error and
+# CARRIES ON with every gs:: helper undefined. That is not a cosmetic failure:
+#   `if gs::is_dry_run; then ...skip the write... fi`
+# evaluates a missing function as rc=127, which is FALSY, so the dry-run branch
+# is skipped and the script proceeds to PUT. The safety predicate fails OPEN.
+#
+# MEASURED 2026-09-15: running a COPY of this script from outside the repo (a
+# backup in a scratch dir, to diff two versions) put SCRIPT_DIR somewhere with no
+# lib/, and a `--dry-run` invocation wrote a live ruleset on hyperpolymath/
+# gitbot-fleet. Every gs:: call printed "command not found" and the run still
+# reported a summary, so the output looked like a completed dry run.
+#
+# So: die if the library cannot be loaded, and then assert that the specific
+# predicates the write path depends on actually exist. A guard that cannot be
+# found must be treated as a guard that said NO.
+if ! . "${SCRIPT_DIR}/lib/common.sh"; then
+    printf 'FATAL: cannot load %s/lib/common.sh -- refusing to run with no safety helpers\n' "${SCRIPT_DIR}" >&2
+    exit 3
+fi
+for _fn in gs::is_dry_run gs::info gs::warn gs::error gs::die gs::confirm; do
+    if ! declare -F "${_fn}" >/dev/null 2>&1; then
+        printf 'FATAL: %s undefined after sourcing lib/common.sh -- refusing to run\n' "${_fn}" >&2
+        exit 3
+    fi
+done
+unset _fn
 
 GS_SCRIPT_NAME="branch-protection-apply"
 GS_HELP_TEXT="Usage: branch-protection-apply.sh [--dry-run] [--owner X] [--limit N] [--report] [--help]
@@ -291,6 +317,7 @@ build_payload() {
 LAST_OUTCOME=""
 declare -i UNGATED=0
 declare -i UNGATED_CONTEXT=0
+declare -i CONDITIONAL_CONTEXT=0
 declare -i WITNESS_UNAVAILABLE=0
 declare -i MERGE_METHOD_REFUSED=0
 
@@ -344,13 +371,65 @@ WITNESS_OUT='[]'
 WITNESS_PROVENANCE=''
 witness_filter_checks() {
     local owner="$1" repo_name="$2" checks_json="$3" prefix="$4" default_branch="${5:-}"
-    local sha heads cr st union kept dropped n_req n_kept map n_heads n_bad
+    local sha heads cr st union kept dropped n_req n_kept map n_heads n_bad cond cond_kept
     WITNESS_OUT="${checks_json}"
     WITNESS_PROVENANCE=''
 
     n_req="$(printf '%s' "${checks_json}" | jq 'length' 2>/dev/null || echo 0)"
     [[ "${n_req}" =~ ^[0-9]+$ ]] || n_req=0
     (( n_req == 0 )) && return 0
+
+    # -- R20: PATH-CONDITIONAL CONTEXTS (owner ruling, 2026-09-15) ----------
+    # A required context whose NAME IS A FILE PATH is path-conditional BY
+    # CONSTRUCTION: it is emitted by a GitHub App that validates that one
+    # config file, and it reports ONLY on commits that touch that path.
+    #
+    # MEASURED on hyperpolymath/standards#789: `.github/dependabot.yml` is a
+    # required context on ruleset 23359343. The dependabot App had genuinely
+    # reported it on recent heads, so it PASSES the witness gate below -- and
+    # then blocks every PR that does not edit that file, forever, with ZERO
+    # red checks. The witness gate asks "has this ever reported?"; its consumer
+    # needs "will this report on an ARBITRARY PR?". For a conditional check
+    # those answers differ permanently. (14th instance of that trap family.)
+    #
+    # So this runs BEFORE head selection, not after the witness union. The drop
+    # is derived from the NAME, never from an observation, which means it also
+    # holds on all four fail-safe paths below -- SILENCE NEVER SUBTRACTS still
+    # governs witnessed contexts, but silence must not RESURRECT a conditional
+    # one either.
+    #
+    # Predicate, deliberately two-limbed:
+    #   (1) begins ".github/"                                  -- App config files
+    #   (2) contains "/" AND ends .yml/.yaml/.json/.toml        -- any path-shaped name
+    # Limb 2 needs the extension clause or it misfires: real witnessed contexts
+    # in this estate are "governance / Code quality + docs", "SonarCloud Code
+    # Analysis", "CodeQL", "CodeRabbit", "Registry + topology in sync", "Repo
+    # self-tests" -- SPACED separators, title case, no file extension. The " / "
+    # in "governance / Code quality + docs" is a job-name separator and carries
+    # no extension, so limb 2 leaves it alone.
+    cond="$(jq -rn --argjson c "${checks_json}" \
+        '[ $c[] | .context | select( test("^\\.github/") or (test("/") and test("\\.(ya?ml|json|toml)$"; "i")) ) ] | join(", ")' \
+        2>/dev/null || true)"
+    if [[ -n "${cond}" ]]; then
+        cond_kept="$(jq -cn --argjson c "${checks_json}" \
+            '[ $c[] | select( .context | ( test("^\\.github/") or (test("/") and test("\\.(ya?ml|json|toml)$"; "i")) ) | not ) ]' \
+            2>/dev/null || true)"
+        # Same discipline as everywhere else in this file: a non-empty string is
+        # not evidence of success. If the filter did not produce an array, keep
+        # the unfiltered set rather than writing whatever jq printed.
+        if printf '%s' "${cond_kept}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+            gs::warn "${prefix}: CONDITIONAL-CONTEXT -- dropping ${cond} (file-path-shaped name: App-emitted config validator, reports only on commits touching that path, so it blocks every other PR with zero red checks)"
+            (( CONDITIONAL_CONTEXT++ )) || true
+            checks_json="${cond_kept}"
+            WITNESS_OUT="${checks_json}"
+            n_req="$(printf '%s' "${checks_json}" | jq 'length' 2>/dev/null || echo 0)"
+            [[ "${n_req}" =~ ^[0-9]+$ ]] || n_req=0
+            # Dropping may have emptied the set. The caller turns [] into the
+            # UNGATED branch and omits the rule entirely, which is correct: an
+            # empty required_status_checks is a fake gate and GitHub 422s it.
+            (( n_req == 0 )) && return 0
+        fi
+    fi
 
     # -- HEAD SELECTION ------------------------------------------------------
     # MEASURED 2026-09-14 on gitbot-fleet: ONE head is not a sample. At
@@ -803,7 +882,7 @@ gs::banner "Summary"
 gs::info "total=${REPO_COUNT}  ok=${OK}  archived=${SK_ARC}  failed=${FAIL}"
 # "applied" alone cannot tell a real write from a no-op; a converged run and
 # a run that changed nothing looked identical. Break it out.
-gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}"
+gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  conditional-contexts=${CONDITIONAL_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}"
 [[ -n "${REPORT_FILE}" ]] && gs::info "report: ${REPORT_FILE}"
 
 (( FAIL > 0 )) && exit 1
