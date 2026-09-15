@@ -324,6 +324,7 @@ declare -i UNGATED_CONTEXT=0
 declare -i CONDITIONAL_CONTEXT=0
 declare -i WITNESS_UNAVAILABLE=0
 declare -i MERGE_METHOD_REFUSED=0
+declare -i MERGE_METHOD_UNREADABLE=0
 declare -i REFUSED_NO_ROLLBACK=0
 declare -i REFUSED_WITNESS=0
 
@@ -616,9 +617,19 @@ apply_one() {
                            | join(" ")' "${CANON_RULESET}" 2>/dev/null || true)"
     if [[ -n "${want_methods}" ]]; then
         local repo_settings legal="" m setting
+        local rc_settings=0
         repo_settings="$(gh api "repos/${OWNER}/${repo_name}" \
-            --jq '{merge:.allow_merge_commit, squash:.allow_squash_merge, rebase:.allow_rebase_merge}' 2>/dev/null || true)"
-        if printf '%s' "${repo_settings}" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            --jq '{merge:.allow_merge_commit, squash:.allow_squash_merge, rebase:.allow_rebase_merge}' 2>/dev/null)" || rc_settings=$?
+        # A 403/404 error BODY is itself valid JSON, and `jq '{squash:.allow_squash_merge}'`
+        # over it yields a well-formed object of NULLs. `type == "object"` therefore PASSES on a
+        # rate-limited read, every field compares unequal to "true", and the repo is reported
+        # SQUASH-DISABLED when the truth is "could not look". Measured 2026-09-15: 22 consecutive
+        # repos refused in 13s at the tail of a 120-repo run, all of them `allow_squash_merge: true`.
+        # The guard must ask what its consumer needs -- "did this come from the repo?" -- so assert
+        # the FIELDS are booleans, which an error body can never satisfy.
+        if (( rc_settings == 0 )) && printf '%s' "${repo_settings}" \
+             | jq -e '(.merge|type=="boolean") and (.squash|type=="boolean") and (.rebase|type=="boolean")' \
+             >/dev/null 2>&1; then
             for m in ${want_methods}; do
                 case "${m}" in
                     merge)  setting=merge  ;;
@@ -643,8 +654,8 @@ apply_one() {
             # Could not read the settings: do not guess. Refusing here is the
             # fail-safe -- a write made blind is the one that cannot be undone
             # by re-running, because the repo may already be unmergeable.
-            gs::error "${prefix}: MERGE-METHOD-UNKNOWN -- cannot read repo merge settings -- refusing"
-            (( MERGE_METHOD_REFUSED++ )) || true
+            gs::error "${prefix}: MERGE-METHOD-UNREADABLE -- could not read repo merge settings (gh rc=${rc_settings}); this is NOT evidence a method is disabled -- refusing"
+            (( MERGE_METHOD_UNREADABLE++ )) || true
             return 1
         fi
     fi
@@ -953,7 +964,7 @@ gs::banner "Summary"
 gs::info "total=${REPO_COUNT}  ok=${OK}  archived=${SK_ARC}  failed=${FAIL}"
 # "applied" alone cannot tell a real write from a no-op; a converged run and
 # a run that changed nothing looked identical. Break it out.
-gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  conditional-contexts=${CONDITIONAL_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}  refused-no-rollback=${REFUSED_NO_ROLLBACK}  refused-witness=${REFUSED_WITNESS}"
+gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  conditional-contexts=${CONDITIONAL_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}  merge-method-unreadable=${MERGE_METHOD_UNREADABLE}  refused-no-rollback=${REFUSED_NO_ROLLBACK}  refused-witness=${REFUSED_WITNESS}"
 [[ -n "${REPORT_FILE}" ]] && gs::info "report: ${REPORT_FILE}"
 
 (( FAIL > 0 )) && exit 1
