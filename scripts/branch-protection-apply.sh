@@ -898,6 +898,31 @@ apply_one() {
         if [[ "${is_same}" == "true" ]]; then
             gs::info "${prefix}: already canonical (#${existing_id}) -- no write"
             LAST_OUTCOME="already-canonical"
+            # R25 GAP FIX (measured 2026-09-15 on hyperpolymath/tropical-types).
+            # "already canonical" means the Base WRITE was a no-op -- it does NOT
+            # mean there is nothing left to do. The WRITE-THEN-DELETE invariant
+            # exists so the producer ruleset is never deleted while the repo lacks
+            # correct protection; here the repo ALREADY has correct protection, so
+            # that invariant is satisfied by construction and the retire is safe.
+            # Returning early left tropical-types still carrying its double after a
+            # run that reported ok=7 retired-doubles=6 -- the guard asked "did we
+            # write?" while its consumer needed "is Base in force?". ROLLBACK_DIR is
+            # non-empty whenever retire_id can be set (startup validation), and the
+            # -RETIRED.json snapshot is taken upstream of this point.
+            if [[ -n "${retire_id}" ]]; then
+                if gs::is_dry_run; then
+                    gs::info "${prefix}: WOULD RETIRE ruleset #${retire_id} -- Base already in force on #${existing_id}; a dry run deletes nothing"
+                else
+                    local del_err_ac
+                    if del_err_ac="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${retire_id}" --method DELETE 2>&1 >/dev/null)"; then
+                        gs::info "${prefix}: RETIRED ruleset #${retire_id} (Base already in force on #${existing_id}; snapshot: ${ROLLBACK_DIR}/${OWNER}-${repo_name}-${retire_id}-RETIRED.json)"
+                        (( RETIRED_DOUBLES++ )) || true
+                    else
+                        gs::error "${prefix}: RETIRE-DELETE-FAILED #${retire_id}: ${del_err_ac//$'\n'/ } -- Base IS in force on #${existing_id}, but the producer ruleset is STILL ACTIVE and still additive on this repo"
+                        (( RETIRE_REFUSED++ )) || true
+                    fi
+                fi
+            fi
             return 0
         fi
     fi
