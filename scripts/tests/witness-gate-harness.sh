@@ -70,6 +70,15 @@ gh() {
         *commits*check-runs*) echo '[]' ;;
         *commits*status*)     echo '[]' ;;
       esac ;;
+    statusonlynoruns)
+      # check-runs READABLE but EMPTY on every head; only a legacy status reports.
+      # CodeRabbit's n_check_run_heads rule: a status does NOT prove checks can run.
+      case "$args" in
+        *"pr list"*merged*) echo "$A" ;;
+        *commits*check-runs*) echo '[]' ;;
+        *commits*status*)     echo '["CodeRabbit"]' ;;
+        *commits?sha*|*"commits?sha"*) echo "$C" ;;
+      esac ;;
     paged)
       case "$args" in
         *"pr list"*merged*) echo "$A" ;;
@@ -174,6 +183,20 @@ run "16-silent-still-drops" "$C16" "$(jq -cn '["build","test","CodeQL"]|sort')" 
 (( WITNESS_UNAVAILABLE == 1 )) && echo "PASS 16-failsafe        WITNESS_UNAVAILABLE=1 (others preserved unfiltered)" \
   || { echo "FAIL 16-failsafe        WITNESS_UNAVAILABLE=$WITNESS_UNAVAILABLE"; fail=1; }
 
+
+# --- 17: a legacy STATUS is not evidence that checks can RUN -----------------
+# Locks in the n_check_run_heads rule (commit 9a820c4). If check-runs is
+# READABLE but EMPTY on every head, a CodeRabbit status alone must NOT license
+# filtering -- that shape is the 243/391 startup-kill class, where the gates are
+# suppressed by a settings bug, not dead. Preserve unfiltered and flag instead.
+echo "--- 17: statuses alone do not license filtering ---"
+CASE=statusonlynoruns; UNGATED_CONTEXT=0; WITNESS_UNAVAILABLE=0; CONDITIONAL_CONTEXT=0
+witness_filter_checks o r "$CHECKS" "case=17" main
+g17="$(printf '%s' "$WITNESS_OUT" | jq -c '[.[].context]|sort')"
+[[ "$g17" == "$ALL" ]] && echo "PASS 17-status-not-proof  all preserved unfiltered" \
+  || { echo "FAIL 17-status-not-proof  got=$g17 want=$ALL"; fail=1; }
+(( WITNESS_UNAVAILABLE == 1 )) && echo "PASS 17-flagged           WITNESS_UNAVAILABLE=1" \
+  || { echo "FAIL 17-flagged           WITNESS_UNAVAILABLE=$WITNESS_UNAVAILABLE"; fail=1; }
 if (( MUTATE )); then
   echo "--- mutant verdict ---"
   # 13 must still PASS under mutation (it asserts nothing is dropped); 12, 14,
