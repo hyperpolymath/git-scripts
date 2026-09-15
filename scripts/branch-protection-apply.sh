@@ -324,6 +324,8 @@ declare -i UNGATED_CONTEXT=0
 declare -i CONDITIONAL_CONTEXT=0
 declare -i WITNESS_UNAVAILABLE=0
 declare -i MERGE_METHOD_REFUSED=0
+declare -i REFUSED_NO_ROLLBACK=0
+declare -i REFUSED_WITNESS=0
 
 # -----------------------------------------------------------------------------
 # CONTEXT-WITNESS GATE
@@ -756,7 +758,13 @@ apply_one() {
     # a repo whose every required context is dead falls through to the UNGATED
     # branch below and has the rule OMITTED -- not written empty (GitHub 422s an
     # empty required_status_checks anyway) and not written dead.
+    # WITNESS_UNAVAILABLE is a CUMULATIVE counter across every repo in the run,
+    # so it cannot answer "did the witness step fail for THIS repo?". Snapshot
+    # it across the call to get a per-repo signal (R23, owner 2026-09-15).
+    local witness_before="${WITNESS_UNAVAILABLE}"
     witness_filter_checks "${OWNER}" "${repo_name}" "${existing_checks}" "${prefix}" "${default_branch}"
+    local repo_witness_failed=0
+    (( WITNESS_UNAVAILABLE > witness_before )) && repo_witness_failed=1 || true
     existing_checks="${WITNESS_OUT}"
     [[ -z "${existing_checks}" || "${existing_checks}" == "null" ]] && existing_checks='[]'
     if [[ "${existing_checks}" == '[]' ]]; then
@@ -799,6 +807,35 @@ apply_one() {
             LAST_OUTCOME="already-canonical"
             return 0
         fi
+    fi
+
+    # ---- R23 REFUSALS (owner 2026-09-15) ----------------------------------
+    # Deliberately placed BEFORE the dry-run branch so a dry run reports the
+    # SAME verdict a live run would. Reporting "would-write" for a repo that a
+    # live run will refuse is the guard-mismatch trap this script exists to
+    # avoid -- the census must predict the rollout, not flatter it.
+    #
+    # (1) No --rollback-dir, no write. S3 already mandates a pre-write snapshot
+    #     per repo; this makes that rule mechanical rather than dependent on the
+    #     operator remembering a flag. Ruleset writes ARE recoverable via the
+    #     version-history endpoint, but recovery is not a substitute for a plan.
+    if [[ -z "${ROLLBACK_DIR}" ]]; then
+        gs::error "${prefix}: REFUSED-NO-ROLLBACK -- ${verb_msg} needs --rollback-dir; refusing to write without a pre-write snapshot"
+        (( REFUSED_NO_ROLLBACK++ )) || true
+        LAST_OUTCOME="refused-no-rollback"
+        return 1
+    fi
+    # (2) Witness step failed for THIS repo => we could not measure it, so we do
+    #     not write it. Previously WITNESS_UNAVAILABLE was a counter only and the
+    #     repo was still written with its contexts preserved unfiltered. Accepted
+    #     cost, chosen by the owner over the narrower arm: this refuses a slice of
+    #     the 243/391 empty-allowlist startup-kill class, so each pass covers
+    #     fewer repos. Safety over coverage.
+    if (( repo_witness_failed )); then
+        gs::error "${prefix}: REFUSED-WITNESS-UNAVAILABLE -- could not observe this repo's checks, so its required contexts are unverified; refusing to write an unmeasured ruleset"
+        (( REFUSED_WITNESS++ )) || true
+        LAST_OUTCOME="refused-witness-unavailable"
+        return 1
     fi
 
     if gs::is_dry_run; then
@@ -916,7 +953,7 @@ gs::banner "Summary"
 gs::info "total=${REPO_COUNT}  ok=${OK}  archived=${SK_ARC}  failed=${FAIL}"
 # "applied" alone cannot tell a real write from a no-op; a converged run and
 # a run that changed nothing looked identical. Break it out.
-gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  conditional-contexts=${CONDITIONAL_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}"
+gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  conditional-contexts=${CONDITIONAL_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}  refused-no-rollback=${REFUSED_NO_ROLLBACK}  refused-witness=${REFUSED_WITNESS}"
 [[ -n "${REPORT_FILE}" ]] && gs::info "report: ${REPORT_FILE}"
 
 (( FAIL > 0 )) && exit 1
