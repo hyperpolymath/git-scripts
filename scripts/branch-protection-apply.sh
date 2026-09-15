@@ -42,6 +42,7 @@ for _fn in gs::is_dry_run gs::info gs::warn gs::error gs::die gs::confirm; do
         exit 3
     fi
 done
+
 unset _fn
 
 GS_SCRIPT_NAME="branch-protection-apply"
@@ -59,6 +60,11 @@ Options:
       --report     Write structured A2ML report to \$GS_REPORT_DIR
       --canon P    Canonical ruleset JSON (default: standards/config/rulesets/base.json)
       --rollback-dir D  Save each pre-write ruleset JSON into D before any PUT
+      --retire-doubles F  File of owner/repo lines (R25). ONLY on those repos, a
+                        double of one old-generation + one new-generation ruleset
+                        is retired: Base replaces the OLD id and the NEW one is
+                        DELETED. Both are snapshotted first; needs --rollback-dir.
+                        Any repo not listed refuses on a double, exactly as before.
       --no-create  Migrate existing rulesets only; never CREATE one where none exists
       --repos-file F  Apply ONLY to the repos listed in F (field 1 = owner/repo, tab-sep);
                    without it the run targets EVERY repo in --owner
@@ -88,6 +94,18 @@ EXTRAS_RULESET="${EXTRAS_RULESET:-/home/hyperpolymath/developer/hyper-repos/stan
 EXTRAS_NAME="Optimus-Extras"
 OVERLAY_REPO=""
 OVERLAY_MODE=""
+RETIRE_DOUBLES_FILE="${RETIRE_DOUBLES_FILE:-}"
+# R25 generation boundary. MEASURED on the 7 authorised repos, 2026-09-15 -- and
+# the first value tried here (23,000,000, taken from the plan's prose "new
+# generation (id >= 23M)") was WRONG and would have refused all seven. The real
+# extremes on that population are:
+#     highest OLD id   18875273  (self-destructing-git-garbage / marches era)
+#     lowest  NEW id   22941164  (marches, producer-minted)
+# a gap of ~4.07M, so 20,000,000 sits mid-gap and is not delicate. It remains a
+# magic number tied to ONE measurement of ONE named population, and it is only a
+# SECONDARY gate: authorisation to delete comes from --retire-doubles, never from
+# this number. Re-measure before pointing --retire-doubles at any other repos.
+NEWGEN_MIN="${NEWGEN_MIN:-20000000}"
 
 while (( $# > 0 )); do
     case "$1" in
@@ -98,6 +116,7 @@ while (( $# > 0 )); do
         --report)     OPT_REPORT=1 ;;
         --canon)      CANON_RULESET="${2:?}"; shift ;;
         --rollback-dir) ROLLBACK_DIR="${2:?}"; shift ;;
+        --retire-doubles) RETIRE_DOUBLES_FILE="${2:?}"; shift ;;
         --no-create)  NO_CREATE=1 ;;
         --repos-file) REPOS_FILE="${2:?}"; shift ;;
         --extras)     EXTRAS_RULESET="${2:?}"; shift ;;
@@ -110,6 +129,18 @@ while (( $# > 0 )); do
     esac
     shift
 done
+
+# R25: an unreadable allow-list must ABORT, not silently disable retiring. If it
+# were merely skipped, every listed repo would refuse as an ordinary double and
+# the run would look like "nothing to retire" rather than "I could not look".
+if [[ -n "${RETIRE_DOUBLES_FILE}" ]]; then
+    [[ -r "${RETIRE_DOUBLES_FILE}" ]] \
+        || gs::die "--retire-doubles file not readable: ${RETIRE_DOUBLES_FILE}"
+    [[ -n "${ROLLBACK_DIR}" ]] \
+        || gs::die "--retire-doubles requires --rollback-dir: retiring DELETES a ruleset and both sides must be snapshotted first"
+    gs::info "retire-doubles authorised for $(/usr/bin/grep -cE '^[^#[:space:]]+/[^#[:space:]]+$' "${RETIRE_DOUBLES_FILE}" || true) repo(s) from ${RETIRE_DOUBLES_FILE} (newgen boundary ${NEWGEN_MIN})"
+fi
+
 
 REPORT_FILE=""
 if (( OPT_REPORT )); then
@@ -327,7 +358,8 @@ declare -i MERGE_METHOD_REFUSED=0
 declare -i MERGE_METHOD_UNREADABLE=0
 declare -i REFUSED_NO_ROLLBACK=0
 declare -i REFUSED_WITNESS=0
-
+declare -i RETIRED_DOUBLES=0
+declare -i RETIRE_REFUSED=0
 # -----------------------------------------------------------------------------
 # CONTEXT-WITNESS GATE
 # -----------------------------------------------------------------------------
@@ -714,9 +746,59 @@ apply_one() {
 
     id_count="$(printf '%s' "${ids}" | /usr/bin/grep -c . || true)"
 
+    local retire_id=""
     if (( id_count > 1 )); then
-        gs::error "${prefix}: ${id_count} active ~DEFAULT_BRANCH rulesets ($(printf '%s' "${ids}" | tr '\n' ' ')) -- refusing; the canon requires exactly one"
-        return 1
+        # R25 (owner ruling, 2026-09-15). On a NAMED list of repos, a double made
+        # of one old-generation ruleset plus one NEW-generation producer ruleset
+        # is retired: tight Base replaces the OLD id, and the producer's is
+        # DELETED, so the repo ends with exactly one canonical ruleset.
+        #
+        # AUTHORISATION IS DATA, NOT A HEURISTIC. The repo must be named in
+        # --retire-doubles or this refuses exactly as it always did. E1 still
+        # protects the owner's HAND-BUILT second layers ("Proof stack safety",
+        # "Publication and continuity verification"): those repos are simply
+        # never on the list, so no predicate can mistake one for producer output.
+        # The id-generation split below is a SECOND gate, never the authorisation.
+        local old_ids="" new_ids="" i
+        for i in ${ids}; do
+            if (( i >= NEWGEN_MIN )); then new_ids="${new_ids}${i} "; else old_ids="${old_ids}${i} "; fi
+        done
+        if [[ -n "${RETIRE_DOUBLES_FILE}" ]] \
+           && /usr/bin/grep -qixF "${OWNER}/${repo_name}" "${RETIRE_DOUBLES_FILE}" \
+           && (( id_count == 2 )) \
+           && [[ "$(printf '%s' "${old_ids}" | wc -w)" == "1" ]] \
+           && [[ "$(printf '%s' "${new_ids}" | wc -w)" == "1" ]]; then
+            local old_id="${old_ids// /}" new_id="${new_ids// /}" old_json new_json
+            old_json="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${old_id}" 2>/dev/null || true)"
+            new_json="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${new_id}" 2>/dev/null || true)"
+            # An error BODY is itself valid JSON (trap 15), so assert a NUMERIC
+            # .id -- never merely that the response parsed. A rate-limited read
+            # must never be allowed to look like a verified pair.
+            if ! printf '%s' "${old_json}" | jq -e '.id | type == "number"' >/dev/null 2>&1 \
+               || ! printf '%s' "${new_json}" | jq -e '.id | type == "number"' >/dev/null 2>&1; then
+                gs::error "${prefix}: RETIRE-UNREADABLE -- cannot re-read both rulesets (#${old_id}, #${new_id}); refusing to retire on an unverified pair"
+                (( RETIRE_REFUSED++ )) || true
+                return 1
+            fi
+            if [[ -z "${ROLLBACK_DIR}" ]]; then
+                gs::error "${prefix}: RETIRE-NO-ROLLBACK -- retiring DELETES a ruleset and needs --rollback-dir; refusing to delete without a snapshot"
+                (( RETIRE_REFUSED++ )) || true
+                return 1
+            fi
+            mkdir -p "${ROLLBACK_DIR}" || gs::die "cannot create rollback dir ${ROLLBACK_DIR}"
+            printf '%s\n' "${old_json}" > "${ROLLBACK_DIR}/${OWNER}-${repo_name}-${old_id}.json" \
+                || gs::die "${prefix}: cannot snapshot #${old_id} -- refusing"
+            printf '%s\n' "${new_json}" > "${ROLLBACK_DIR}/${OWNER}-${repo_name}-${new_id}-RETIRED.json" \
+                || gs::die "${prefix}: cannot snapshot #${new_id} -- refusing"
+            ids="${old_id}"
+            existing_full="${old_json}"
+            retire_id="${new_id}"
+            id_count=1
+            gs::warn "${prefix}: RETIRE-DOUBLE -- Base replaces old #${old_id}; producer ruleset #${new_id} ($(printf '%s' "${new_json}" | jq -r '.name // "?"')) will be DELETED once the Base write succeeds (both snapshotted)"
+        else
+            gs::error "${prefix}: ${id_count} active ~DEFAULT_BRANCH rulesets ($(printf '%s' "${ids}" | tr '\n' ' ')) -- refusing; the canon requires exactly one"
+            return 1
+        fi
     fi
     existing_id="$(printf '%s' "${ids}" | head -n1)"
 
@@ -851,6 +933,7 @@ apply_one() {
 
     if gs::is_dry_run; then
         gs::info "${prefix}: WOULD ${verb_msg} (${default_branch})"
+        [[ -n "${retire_id}" ]] && gs::info "${prefix}: WOULD RETIRE ruleset #${retire_id} -- deleted only AFTER the Base write succeeds; a dry run deletes nothing"
         LAST_OUTCOME="would-write"
         return 0
     fi
@@ -861,6 +944,22 @@ apply_one() {
         # cause had to be reproduced by hand. Never discard the response body.
         if api_err="$(gh api "${url}" --method "${method}" --input - <<< "${payload}" 2>&1 >/dev/null)"; then
             gs::info "${prefix}: ${verb_msg/WOULD /} ok (${default_branch})"
+            # R25: delete the producer ruleset ONLY now. WRITE-THEN-DELETE, never
+            # the reverse -- deleting first and then failing the write would leave
+            # the repo with NO default-branch protection at all, strictly worse
+            # than the double we set out to fix. A failed delete leaves Base
+            # written and the producer ruleset still additive: no worse than
+            # before, so it is reported LOUDLY and never retried blindly.
+            if [[ -n "${retire_id}" ]]; then
+                local del_err
+                if del_err="$(gh api "repos/${OWNER}/${repo_name}/rulesets/${retire_id}" --method DELETE 2>&1 >/dev/null)"; then
+                    gs::info "${prefix}: RETIRED ruleset #${retire_id} (snapshot: ${ROLLBACK_DIR}/${OWNER}-${repo_name}-${retire_id}-RETIRED.json)"
+                    (( RETIRED_DOUBLES++ )) || true
+                else
+                    gs::error "${prefix}: RETIRE-DELETE-FAILED #${retire_id}: ${del_err//$'\n'/ } -- Base IS written, but the producer ruleset is STILL ACTIVE and still additive on this repo"
+                    (( RETIRE_REFUSED++ )) || true
+                fi
+            fi
             LAST_OUTCOME="written"
             return 0
         fi
@@ -964,7 +1063,7 @@ gs::banner "Summary"
 gs::info "total=${REPO_COUNT}  ok=${OK}  archived=${SK_ARC}  failed=${FAIL}"
 # "applied" alone cannot tell a real write from a no-op; a converged run and
 # a run that changed nothing looked identical. Break it out.
-gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  conditional-contexts=${CONDITIONAL_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}  merge-method-unreadable=${MERGE_METHOD_UNREADABLE}  refused-no-rollback=${REFUSED_NO_ROLLBACK}  refused-witness=${REFUSED_WITNESS}"
+gs::info "  written=${WROTE}  would-write=${WOULD}  already-canonical=${SAME}  skipped-no-create=${NOCREATE}  ungated=${UNGATED}  ungated-contexts=${UNGATED_CONTEXT}  conditional-contexts=${CONDITIONAL_CONTEXT}  witness-unavailable=${WITNESS_UNAVAILABLE}  merge-method-refused=${MERGE_METHOD_REFUSED}  merge-method-unreadable=${MERGE_METHOD_UNREADABLE}  refused-no-rollback=${REFUSED_NO_ROLLBACK}  refused-witness=${REFUSED_WITNESS}  retired-doubles=${RETIRED_DOUBLES}  retire-refused=${RETIRE_REFUSED}"
 [[ -n "${REPORT_FILE}" ]] && gs::info "report: ${REPORT_FILE}"
 
 (( FAIL > 0 )) && exit 1
