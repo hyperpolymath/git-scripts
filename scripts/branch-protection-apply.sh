@@ -414,7 +414,7 @@ WITNESS_PROVENANCE=''
 # can be read or the observed set is empty, preserves the input checks and returns success.
 witness_filter_checks() {
     local owner="$1" repo_name="$2" checks_json="$3" prefix="$4" default_branch="${5:-}"
-    local sha heads cr st union kept dropped n_req n_kept map n_heads n_bad cond cond_kept n_check_run_heads
+    local sha heads cr st union kept dropped n_req n_kept map n_heads n_bad cond cond_kept n_cond_kept n_check_run_heads
     local cr_readable st_readable
     WITNESS_OUT="${checks_json}"
     WITNESS_PROVENANCE=''
@@ -463,7 +463,8 @@ witness_filter_checks() {
         # the unfiltered set rather than writing whatever jq printed.
         if printf '%s' "${cond_kept}" | jq -e 'type == "array"' >/dev/null 2>&1; then
             gs::warn "${prefix}: CONDITIONAL-CONTEXT -- dropping ${cond} (file-path-shaped name: App-emitted config validator, reports only on commits touching that path, so it blocks every other PR with zero red checks)"
-            (( CONDITIONAL_CONTEXT++ )) || true
+            n_cond_kept="$(printf '%s' "${cond_kept}" | jq 'length')"
+            (( CONDITIONAL_CONTEXT += n_req - n_cond_kept )) || true
             checks_json="${cond_kept}"
             WITNESS_OUT="${checks_json}"
             n_req="$(printf '%s' "${checks_json}" | jq 'length' 2>/dev/null || echo 0)"
@@ -537,11 +538,16 @@ witness_filter_checks() {
         else
             cr=''
         fi
-        st="$(gh api "repos/${owner}/${repo_name}/commits/${sha}/status" \
+        st="$(gh api "repos/${owner}/${repo_name}/commits/${sha}/status" --paginate \
                 --jq '[.statuses[].context]' 2>/dev/null || true)"
         st_readable=0
         if [[ -n "${st}" ]] && printf '%s' "${st}" | jq -e 'type == "array"' >/dev/null 2>&1; then
-            st_readable=1
+            # As with check runs, pagination emits one context array per page.
+            if st="$(printf '%s' "${st}" | jq -cs 'add // []' 2>/dev/null)"; then
+                st_readable=1
+            else
+                st=''
+            fi
         else
             st=''
         fi
@@ -604,7 +610,7 @@ witness_filter_checks() {
 
     if [[ -n "${dropped}" ]]; then
         gs::warn "${prefix}: UNGATED-CONTEXT -- dropping ${dropped} (required but never reported across ${n_heads} default-branch head(s), check-runs AND statuses; ${n_kept}/${n_req} witnessed)"
-        (( UNGATED_CONTEXT++ )) || true
+        (( UNGATED_CONTEXT += n_req - n_kept )) || true
     fi
     if [[ -n "${WITNESS_PROVENANCE}" ]]; then
         gs::info "${prefix}: witnessed ${n_kept}/${n_req} over ${n_heads} head(s) -- ${WITNESS_PROVENANCE}"

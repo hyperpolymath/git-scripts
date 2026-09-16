@@ -85,6 +85,13 @@ gh() {
         *commits*check-runs*) printf '["CodeRabbit"]\n["build","test"]\n' ;;
         *commits*status*)     echo '[]' ;;
       esac ;;
+    statuspaged)
+      case "$args" in
+        *"pr list"*merged*) echo "$A" ;;
+        *commits*check-runs*) echo '["build"]' ;;
+        *commits*status*--paginate*) printf '["CodeRabbit"]\n["CodeQL"]\n' ;;
+        *commits*status*) echo '["CodeRabbit"]' ;;
+      esac ;;
     badsha)
       case "$args" in
         *"pr list"*) : ;;
@@ -137,6 +144,10 @@ run apierr "$CHECKS" "$ALL"
 run empty  "$CHECKS" "$ALL"
 run badsha "$CHECKS" "$ALL"
 run paged  "$CHECKS" "$(jq -cn '["CodeRabbit","build","test"]|sort')"
+(( UNGATED_CONTEXT == 2 )) && echo "PASS ungated-counter    UNGATED_CONTEXT=2" \
+  || { echo "FAIL ungated-counter    UNGATED_CONTEXT=$UNGATED_CONTEXT"; fail=1; }
+STATUS_PAGE_CHECKS='[{"context":"build"},{"context":"CodeQL"},{"context":"CodeRabbit"}]'
+run statuspaged "$STATUS_PAGE_CHECKS" "$(jq -cn '["CodeRabbit","CodeQL","build"]|sort')"
 
 CASE=statusonly; : > "$BASEFLAG"
 witness_filter_checks o r "$CHECKS" "case=basecheck" main >/dev/null
@@ -154,10 +165,10 @@ esac
 echo "--- 12-16: R20, the path-conditional drop ---"
 declare -a R20=()
 
-# 12. .github/dependabot.yml is witnessed and must STILL be dropped.
-C12='[{"context":"CodeQL"},{"context":"CodeRabbit"},{"context":".github/dependabot.yml"}]'
+# 12. Multiple .github paths are witnessed and must STILL be dropped.
+C12='[{"context":"CodeQL"},{"context":"CodeRabbit"},{"context":".github/dependabot.yml"},{"context":".github/renovate.json"}]'
 run "12-dependabot" "$C12" "$(jq -cn '["CodeQL","CodeRabbit"]|sort')" allwitnessed; R20+=($?)
-(( CONDITIONAL_CONTEXT == 1 )) && echo "PASS 12-counter         CONDITIONAL_CONTEXT=1" \
+(( CONDITIONAL_CONTEXT == 2 )) && echo "PASS 12-counter         CONDITIONAL_CONTEXT=2" \
   || { echo "FAIL 12-counter         CONDITIONAL_CONTEXT=$CONDITIONAL_CONTEXT"; fail=1; }
 
 # 13. FALSE-POSITIVE GUARD. Spaced job-name separator, no extension -> KEPT.
