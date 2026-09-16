@@ -989,6 +989,7 @@ apply_one() {
                 else
                     gs::error "${prefix}: RETIRE-DELETE-FAILED #${retire_id}: ${del_err//$'\n'/ } -- Base IS written, but the producer ruleset is STILL ACTIVE and still additive on this repo"
                     (( RETIRE_REFUSED++ )) || true
+                    return 1
                 fi
             fi
             LAST_OUTCOME="written"

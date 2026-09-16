@@ -74,7 +74,7 @@ ${COND}
 
 NEWGEN_MIN=20000000
 OWNER=hyperpolymath
-LIST="$(mktemp)"; trap 'rm -f "${LIST}"' EXIT
+LIST="$(mktemp)"; trap 'rm -f "${LIST}" "${LIST}.2"' EXIT
 cat > "${LIST}" <<'EOF'
 hyperpolymath/tropical-types
 hyperpolymath/the-metadatastician
@@ -136,6 +136,15 @@ polystack 18639852 22961049
 network-outpost 18874804 22961091
 marches 18875273 22941164
 PAIRS
+
+if [[ -n "${MUTATE}" ]]; then
+  if (( fail )); then
+    echo "KILL CONFIRMED: mutant caused the guard cases to fail"
+    exit 0
+  fi
+  echo "MUTANT SURVIVED: guard cases stayed green"
+  exit 1
+fi
 
 if (( fail )); then echo "SUITE RED"; else echo "SUITE GREEN"; fi
 exit "${fail}"
