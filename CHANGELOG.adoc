@@ -1,0 +1,61 @@
+== Changelog
+
+All notable changes to `+git-scripts+` will be documented in this file.
+
+This file is generated from conventional commits by the
+https://github.com/hyperpolymath/standards/blob/main/.github/workflows/changelog-reusable.yml[`+changelog-reusable.yml+`]
+workflow (`+hyperpolymath/standards#206+`). Adopt the workflow in this
+repo’s CI to keep this file in sync automatically — see
+https://github.com/hyperpolymath/standards/blob/main/templates/cliff.toml[`+templates/cliff.toml+`]
+for the canonical config.
+
+The format follows https://keepachangelog.com/en/1.1.0/[Keep a
+Changelog]; this project aims to follow
+https://semver.org/spec/v2.0.0.html[Semantic Versioning].
+
+=== [Unreleased]
+
+==== Added
+
+* feat(safety): owner allowlist + two-tier menu with clearer item names
+(#1)
+* feat(script_manager): incorporate 3 hyperpolymath estate batch scripts
+as Elixir rules
+* feat(ui): add AffineScript-TEA Cadre router with HAR/script API bridge
+* feat(crg): add crg-grade and crg-badge justfile recipes
+
+==== Fixed
+
+* fix(ci): sync hypatia-scan.yml to canonical (413:
+env.HOME+Phase-2+SARIF) (#7)
+* fix(ci): adopt canonical hypatia-scan.yml (env.HOME/scanner-layout +
+Comment-step gate) (#5)
+* fix: remove tracked build artifacts, update gitignore
+
+==== Changed
+
+* refactor(lib): fold ownership_guard primitives into common.sh + wire
+env passthrough from Elixir TUI
+* refactor(scripts): shared common.sh library + grouped subgroups + new
+health/sync tools
+
+==== Documentation
+
+* docs(readme): add SPDX copyright line and standard badges
+* docs: add post-audit status report for M5 sweep
+* docs: add post-audit status report
+* docs: add TOPOLOGY.md
+
+==== CI
+
+* ci: deploy dogfood-gate, add Groove manifest and CRG tests
+
+=== Pre-history
+
+Prior commits to this file’s introduction are recorded in git history
+but not formally classified into Keep-a-Changelog sections. To backfill,
+run `+git cliff -o CHANGELOG.md+` locally using the canonical
+https://github.com/hyperpolymath/standards/blob/main/templates/cliff.toml[`+cliff.toml+`]
+— this is one-shot mechanical work.
+
+'''''
