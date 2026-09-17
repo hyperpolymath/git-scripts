@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MPL-2.0
+name: Scorecard
+
+on:
+  schedule:
+    - cron: "0 0 * * 0"
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+  id-token: write
+
+jobs:
+  scorecard:
+    uses: hyperpolymath/standards/.github/workflows/scorecard-reusable.yml@1f3eef621985b2dd0e7e2d3ac265c0f0ba6b0a78
