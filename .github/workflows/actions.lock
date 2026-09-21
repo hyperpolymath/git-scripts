@@ -11,8 +11,10 @@ workflows:
     '.github/workflows/hypatia-scan.yml': []
     '.github/workflows/label-triage.yml': []
     '.github/workflows/labels.yml': []
+    '.github/workflows/main-estate-audit.yml': []
     '.github/workflows/push-email-notify.yml':
         - 'hyperpolymath/smtp-notify-action@v0.3.0'
+    '.github/workflows/scorecard.yml': []
     '.github/workflows/secret-scanner.yml': []
 dependencies:
     'actions/checkout@v7.0.1':
